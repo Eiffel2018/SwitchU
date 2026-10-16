@@ -52,6 +52,17 @@ jobs:
             apt-get -y install curl gcc g++ zip zstd
           fi
 
+      # Atmosphere-libs 1.12.0 (lib/Atmosphere-libs) needs libnx newer than the
+      # container's 4.12.0 release (pgl shell events and more). Build the same
+      # switchbrew commit the local builds use.
+      - name: Build libnx (switchbrew 20cbcfd9)
+        shell: bash
+        run: |
+          git clone --filter=blob:none https://github.com/switchbrew/libnx.git /tmp/libnx
+          git -C /tmp/libnx checkout --detach 20cbcfd90567f7bf84df7725f27e345e2164fa6b
+          make -C /tmp/libnx/nx -j"$(nproc)" install
+          grep -q pglEventObserverGetShellEvent "$DEVKITPRO/libnx/include/switch/services/pgl.h"
+
       - name: Set xmake env
         run: echo "XMAKE_GLOBALDIR=${{ runner.workspace }}/xmake-global" >> "$GITHUB_ENV"
 
