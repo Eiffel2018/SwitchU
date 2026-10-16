@@ -77,7 +77,20 @@ jobs:
           fi
 
       - name: Build SwitchU
-        run: xmake -vD --root
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! xmake -vD --root 2>&1 | tee build.log; then
+            # Job logs need a GitHub sign-in; annotations do not. Put the
+            # compiler's errors and the end of the log into one annotation.
+            { (dkp-pacman -Q libnx devkitA64 2>/dev/null || pacman -Q libnx devkitA64 2>/dev/null || true)
+              grep -nE "error:|Error [0-9]+|undefined reference|No such file" build.log | head -40
+              echo "----- last lines -----"
+              tail -n 25 build.log; } > failure.txt
+            msg=$(tr -d '\r' < failure.txt | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=xmake build failed::${msg}"
+            exit 1
+          fi
 
       - name: Package install layout
         run: xmake install -o "dist/${{ matrix.variant }}/${{ matrix.mode }}" --root
