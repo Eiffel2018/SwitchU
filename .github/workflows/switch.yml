@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - master
+      - breeze-home-toggle
   pull_request:
     types:
       - opened
@@ -25,7 +26,7 @@ jobs:
       matrix:
         mode:
           - debug
-#          - release
+          - release
         variant:
           - homebrew
           - sysmodule
