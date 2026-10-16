@@ -5,6 +5,8 @@ on:
     branches:
       - master
       - breeze-home-toggle
+    tags:
+      - '*'
   pull_request:
     types:
       - opened
@@ -46,10 +48,10 @@ jobs:
         run: |
           if command -v sudo >/dev/null 2>&1; then
             sudo apt-get update
-            sudo apt-get -y install curl gcc g++ zip zstd
+            sudo apt-get -y install curl gcc g++ zip unzip zstd
           else
             apt-get update
-            apt-get -y install curl gcc g++ zip zstd
+            apt-get -y install curl gcc g++ zip unzip zstd
           fi
 
       # Atmosphere-libs 1.12.0 (lib/Atmosphere-libs) needs libnx newer than the
@@ -106,20 +108,22 @@ jobs:
       - name: Package install layout
         run: xmake install -o "dist/${{ matrix.variant }}/${{ matrix.mode }}" --root
 
-      - name: Create sysmodule zip
+      # The same two files a local release ships: SwitchU.zip (the whole
+      # install layout) and home_daemon.zip (the daemon folder only, which
+      # Breeze installs). Files only, no folder entries, atmosphere first.
+      - name: Create release zips
         if: matrix.variant == 'sysmodule'
         shell: bash
         run: |
-          repo_root="$PWD"
-          package_root="dist/sysmodule/${{ matrix.mode }}"
-          archive_path="$repo_root/artifacts/SwitchU-sysmodule-${{ matrix.mode }}.zip"
-
-          test -d "$package_root/atmosphere"
-          test -d "$package_root/switch"
-
-          mkdir -p "$repo_root/artifacts"
-          cd "$package_root"
-          zip -r "$archive_path" atmosphere switch
+          out="$PWD/artifacts"
+          mkdir -p "$out"
+          cd "dist/sysmodule/${{ matrix.mode }}"
+          test -f atmosphere/contents/0100000000001000/exefs.nsp
+          test -f switch/SwitchU/bin/menu/main
+          zip -q -r -D -X "$out/SwitchU.zip" atmosphere switch
+          zip -q -r -D -X "$out/home_daemon.zip" atmosphere/contents/0100000000001000
+          unzip -l "$out/SwitchU.zip" | tail -n 1
+          unzip -l "$out/home_daemon.zip"
 
       - name: Upload homebrew artifact
         if: matrix.variant == 'homebrew'
@@ -127,15 +131,38 @@ jobs:
         with:
           name: SwitchU-homebrew-${{ matrix.mode }}
           if-no-files-found: error
-          path: |
-            build/cross/aarch64/${{ matrix.mode }}/SwitchU.nro
-            build/cross/aarch64/${{ matrix.mode }}/SwitchU-Manager.nro
-            dist/homebrew/${{ matrix.mode }}/
+          path: dist/homebrew/${{ matrix.mode }}/
 
-      - name: Upload sysmodule artifact
+      - name: Upload release zips
         if: matrix.variant == 'sysmodule'
         uses: actions/upload-artifact@v4
         with:
-          name: SwitchU-sysmodule-${{ matrix.mode }}
+          name: SwitchU-${{ matrix.mode }}
           if-no-files-found: error
-          path: artifacts/SwitchU-sysmodule-${{ matrix.mode }}.zip
+          path: |
+            artifacts/SwitchU.zip
+            artifacts/home_daemon.zip
+
+  # A pushed tag gets a DRAFT release with the two zips attached, to be
+  # checked and published by hand.
+  draft-release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build-switch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release zips
+        uses: actions/download-artifact@v4
+        with:
+          name: SwitchU-release
+          path: release
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          name: ${{ github.ref_name }}
+          files: |
+            release/SwitchU.zip
+            release/home_daemon.zip
