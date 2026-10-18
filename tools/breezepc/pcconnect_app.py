@@ -1296,7 +1296,10 @@ class App:
     def _switchu_controller_worker(self, generation, host, code, enabled):
         action = "on" if enabled else "off"
         try:
-            reply = switchu_remote.controller(host, code, enabled, timeout=3.0)
+            # OFF waits behind a complete bounded touch (up to 5 s) and
+            # possibly a preview request; its timeout must outlast that work.
+            reply = switchu_remote.controller(host, code, enabled,
+                                              timeout=3.0 if enabled else 10.0)
             state = "enabled" if enabled else "disabled"
             message = "SwitchU virtual input %s." % state
         except switchu_remote.AmbiguousControllerError as exc:

@@ -88,5 +88,12 @@ class TouchTests(unittest.TestCase):
         with patch('pcconnect_app.threading.Thread') as thread:
             App.send_switchu_touch(a,1,2,'tap',100);thread.assert_not_called()
 
+    def test_off_timeout_outlasts_long_touch_without_replaying(self):
+        a=object.__new__(App);a.out=queue.Queue()
+        with patch('pcconnect_app.switchu_remote.controller',return_value='OK controller disabled') as cmd:
+            a._switchu_controller_worker(0,'127.0.0.1','pair',False)
+            cmd.assert_called_once_with('127.0.0.1','pair',False,timeout=10.0)
+        self.assertEqual(a.out.get()[2],'disabled')
+
 
 if __name__=='__main__':unittest.main()
