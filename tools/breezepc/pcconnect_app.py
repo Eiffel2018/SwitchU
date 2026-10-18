@@ -1187,7 +1187,7 @@ class App:
                        variable=self.switchu_touch_preview,
                        command=self._cancel_touch_preview).pack(side="left")
         tk.OptionMenu(touch_bar, self.switchu_touch_gesture, "tap", "double", "long",
-                      command=lambda value: self.switchu_touch_ms.set("800" if value == "long" else "100")).pack(side="left")
+                      command=self._set_switchu_touch_gesture).pack(side="left")
         for label, variable, maximum in (("X", self.switchu_touch_x, 1279),
                                          ("Y", self.switchu_touch_y, 719),
                                          ("Hold ms", self.switchu_touch_ms, 5000),
@@ -1400,6 +1400,7 @@ class App:
         self.switchu_touch_down = None
 
     def send_switchu_touch(self, x=None, y=None, gesture=None, duration_ms=None):
+        self._cancel_touch_preview()
         if (self.switchu_controller_state != "enabled" or self.switchu_controller_command_pending
                 or self.switchu_busy or self.switchu_waiting_for_pad or not self._switchu_pad_ready()):
             self.status.config(text="Touch blocked: enable SwitchU input after Breeze Game input has stopped.")
@@ -1435,6 +1436,10 @@ class App:
     def _touch_preview_enabled(self):
         variable = getattr(self, "switchu_touch_preview", None)
         return variable is not None and variable.get()
+
+    def _set_switchu_touch_gesture(self, value):
+        self._cancel_touch_preview()
+        self.switchu_touch_ms.set("800" if value == "long" else "100")
 
     def _touch_down_preview(self, e, double=False):
         self._cancel_touch_preview()

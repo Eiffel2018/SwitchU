@@ -78,6 +78,9 @@ class TouchTests(unittest.TestCase):
         a=self.app();e=SimpleNamespace(x=10,y=10);a._touch_down_preview(e);a.on_touch_release(e)
         a._cancel_touch_preview();a.root.flush();self.assertEqual(a.calls,[])
         a._touch_down_preview(e);a.on_touch_release(e);a.switchu_touch_preview.set(False);a.root.flush();self.assertEqual(a.calls,[])
+        a.switchu_touch_preview.set(True);a.switchu_touch_ms=Var('100')
+        a._touch_down_preview(e);a.on_touch_release(e);a._set_switchu_touch_gesture('long');a.root.flush()
+        self.assertEqual(a.calls,[]);self.assertEqual(a.switchu_touch_ms.get(),'800')
 
     def test_disabled_gate_rejects_touch_without_worker(self):
         a=object.__new__(App);a.switchu_controller_state='disabled';a.switchu_controller_command_pending=False
