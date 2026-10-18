@@ -1,0 +1,5 @@
+{
+    "name": "SwitchU HOME daemon (Breeze)",
+    "tid": "0100000000001000",
+    "requires_reboot": true
+}

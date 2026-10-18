@@ -269,6 +269,7 @@ target("SwitchU")
             io.writefile(path.join(daemon_dir, "fork.txt"),
                 string.format("interface=%s\nversion=%s\n",
                     target:values("fork.interface"), target:values("fork.version")))
+            os.cp(path.join(os.projectdir(), "projects/daemon/toolbox.json"), daemon_dir)
 
             -- Breeze loader for the Album slot (breeze_first without the User Page loader).
             local loader_dir = path.join(target:installdir(), "atmosphere", "contents",
