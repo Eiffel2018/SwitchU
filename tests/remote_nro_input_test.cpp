@@ -54,7 +54,7 @@ bool successButtonPulse() {
     return check(rc == 0, "button pulse succeeds")
         && check(containsInOrder({"init", "work+", "device+", "state", "sleep", "state", "device-", "work-", "exit"}), "button pulse releases and destroys owned controller")
         && check(states.size() == 3 && states[0].buttons == 0 && states[1].buttons == (1ULL << 10) && states[2].buttons == 0, "neutral device is published before the short pulse and released before teardown")
-        && check(sleeps == std::vector<u64>{750'000'000, 25'000'000}, "device settles before the requested pulse; pulse is not lengthened");
+        && check(sleeps == std::vector<u64>{1'250'000'000, 25'000'000, 100'000'000}, "device settles before the requested pulse and release is sampled before detach; pulse is not lengthened");
 }
 
 bool successStickPulse() {
@@ -129,7 +129,7 @@ bool initialNeutralFailureDoesNotSendPulse() {
     reset();
     failSetCall = 1;
     const Result rc = switchu::remote_input::pressButton(1, 100);
-    return check(rc == kFailure && sleeps.empty(), "failed initial publication sends no pressed state or delay")
+    return check(rc == kFailure && sleeps == std::vector<u64>{100'000'000}, "failed initial publication only settles cleanup neutral; no pressed pulse")
         && check(states.size() == 2 && states[0].buttons == 0 && states[1].buttons == 0,
                  "failed initial publication only retries neutral")
         && check(containsInOrder({"device+", "state", "state", "device-", "work-", "exit"}),

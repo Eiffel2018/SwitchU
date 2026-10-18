@@ -12,7 +12,8 @@ constexpr size_t kWorkBufferSize = 0x1000;
 // Publish a connected neutral controller before the pulse. The game's input
 // loop must observe the new device before a short press starts; otherwise its
 // first 100 ms pulse can be consumed entirely by controller discovery.
-constexpr u64 kControllerSettleNs = 750'000'000ULL;
+constexpr u64 kControllerSettleNs = 1'250'000'000ULL;
+constexpr u64 kNeutralSettleNs = 100'000'000ULL;
 constexpr u64 kAllowedButtons = 0xFFFFULL | HiddbgNpadButton_Home | HiddbgNpadButton_Capture
     | HidNpadButton_LeftSL | HidNpadButton_LeftSR | HidNpadButton_RightSL | HidNpadButton_RightSR;
 static_assert(HiddbgNpadButton_Home == (1ULL << 18));
@@ -59,6 +60,8 @@ Result cleanupOwnedControllerLocked(Result firstResult) {
         const Result neutralResult = hiddbgSetHdlsState(g_handle, &neutral);
         if (R_SUCCEEDED(firstResult) && R_FAILED(neutralResult))
             firstResult = neutralResult;
+        if (R_SUCCEEDED(neutralResult))
+            svcSleepThread(kNeutralSettleNs);
         g_stateMayBeActive = false;
     }
 
@@ -143,8 +146,13 @@ Result applyStateFor(const HiddbgHdlsState& pressed, u32 holdMs) {
         svcSleepThread(static_cast<u64>(holdMs) * 1'000'000ULL);
         const HiddbgHdlsState released = makeState(0);
         result = hiddbgSetHdlsState(g_handle, &released);
-        if (R_SUCCEEDED(result))
+        if (R_SUCCEEDED(result)) {
             g_stateMayBeActive = false;
+            // Detaching immediately can discard the neutral sample before
+            // the game's input loop observes it. Keep the device connected
+            // for a few frames with all controls released, then destroy it.
+            svcSleepThread(kNeutralSettleNs);
+        }
     }
     return cleanupOwnedControllerLocked(result);
 }
