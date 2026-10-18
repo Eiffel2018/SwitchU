@@ -82,6 +82,10 @@ game inputs. The main UI excludes rail/SYNC and provides 26 operations:
 24 buttons/directions plus the L3/R3 center clicks. Optional rail protocol
 input delivery depends on the virtual controller/style supported by the
 target and is not hardware-verified.
+The 26 controller operations always use 6802 without an extra 6801 availability
+check. Breeze's existing Game input, Show/Hide and other functions retain 6801.
+Show/Hide changes the overlay while the game keeps running; HOME switches
+foreground between the game and NRO with the corresponding pause/resume.
 
 The controller is shared by the daemon's serialized input worker. Each bounded
 operation now neutralizes input, detaches its virtual device, releases its HDLS

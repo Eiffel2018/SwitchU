@@ -37,6 +37,11 @@ The Joy-Con-style controller includes HOME, separate D-pad and left/right
 analog pads, L3/R3 stick clicks, and Capture: 26 operations in total,
 including the eight stick directions and two center clicks. Rail and SYNC
 are outside this main controller layout.
+These 26 controls always use SwitchU TCP 6802; clicking them does not probe
+6801 or choose a different transport. The original Breeze Game input and
+other Breeze functions continue to use 6801. Show/Hide controls Breeze's
+overlay without pausing the game. HOME is a real system-button input for
+foreground switching and game pause/resume; it is not an overlay Show/Hide.
 Each outer-pad click sends a bounded
 100 ms analog impulse; positive Y is up and the daemon centers the axes.
 HOME, Capture, rail and analog input need the updated daemon. Use transport log
