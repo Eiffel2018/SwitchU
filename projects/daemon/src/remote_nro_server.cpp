@@ -15,6 +15,7 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -27,10 +28,11 @@ constexpr std::uint16_t kDefaultPort = 6802;
 constexpr std::size_t kMaxCodeLength = 64;
 constexpr std::uint32_t kClientIdlePollLimit = 1200; // 60 seconds at 50 ms
 constexpr std::uint32_t kUnauthenticatedIdlePollLimit = 100; // 5 seconds
+constexpr const char* kDiagnosticPath = "sdmc:/logs/SwitchU/remote-nro.log";
+constexpr long kDiagnosticMaxBytes = 128 * 1024;
 
 struct Settings {
     std::string code;
-    std::uint16_t port = kDefaultPort;
 };
 
 std::mutex g_mutex;
@@ -45,8 +47,25 @@ std::string g_path;
 std::string g_state = "idle";
 std::uint32_t g_result = 0;
 std::string g_code;
-std::uint16_t g_port = kDefaultPort;
 void (*g_wake)() = nullptr;
+
+void diagnostic(const char* event, int fd = -1, int error = 0, Result bsdResult = 0) {
+    (void)::mkdir("sdmc:/logs", 0777);
+    (void)::mkdir("sdmc:/logs/SwitchU", 0777);
+    FILE* file = std::fopen(kDiagnosticPath, "a+");
+    if (!file)
+        return;
+    if (std::fseek(file, 0, SEEK_END) == 0 && std::ftell(file) > kDiagnosticMaxBytes) {
+        (void)std::fclose(file);
+        file = std::fopen(kDiagnosticPath, "w");
+        if (!file)
+            return;
+    }
+    std::fprintf(file, "[%s] event=%s fd=%d errno=%d bsd=0x%08X\n",
+                 kRemoteChannelVersionMarker, event ? event : "unknown", fd,
+                 error, static_cast<unsigned int>(bsdResult));
+    (void)std::fclose(file);
+}
 
 std::string_view trim(std::string_view value) {
     while (!value.empty() && (value.front() == ' ' || value.front() == '\t'
@@ -134,7 +153,6 @@ bool readSettings(Settings& settings) {
         return false;
 
     settings.code = std::move(code);
-    settings.port = kDefaultPort;
     return true;
 }
 
@@ -147,7 +165,7 @@ void sleepPoll() {
     svcSleepThread(50'000'000ULL);
 }
 
-bool sendAll(int fd, std::string_view value) {
+bool sendAll(int fd, std::string_view value, const char* stage) {
     std::size_t sent = 0;
     unsigned int polls = 0;
     while (sent < value.size() && g_running.load() && polls < 40) {
@@ -159,10 +177,16 @@ bool sendAll(int fd, std::string_view value) {
             ++polls;
             svcSleepThread(25'000'000ULL);
         } else {
+            const int error = count < 0 ? errno : EPIPE;
+            diagnostic(stage, fd, error, count < 0 ? socketGetLastResult() : 0);
             return false;
         }
     }
-    return sent == value.size();
+    if (sent == value.size())
+        return true;
+    diagnostic(stage, fd, g_running.load() ? ETIMEDOUT : ECANCELED,
+               g_running.load() ? socketGetLastResult() : 0);
+    return false;
 }
 
 void sendStatus(int fd) {
@@ -180,22 +204,29 @@ void sendStatus(int fd) {
         "OK status id=%llu state=%s rc=0x%08X\n",
         static_cast<unsigned long long>(id), state.c_str(), result);
     if (count > 0 && static_cast<std::size_t>(count) < sizeof(buffer))
-        (void)sendAll(fd, std::string_view(buffer, static_cast<std::size_t>(count)));
+        (void)sendAll(fd, std::string_view(buffer, static_cast<std::size_t>(count)),
+                      "status-response");
 }
 
-bool readLine(int fd, std::string& line, std::uint32_t& idlePolls,
-              std::uint32_t pollLimit) {
+enum class ReadOutcome { Line, PeerClosed, Timeout, Stopped, Error, TooLong };
+
+ReadOutcome readLine(int fd, std::string& line, std::uint32_t& idlePolls,
+                     std::uint32_t pollLimit, int& readError) {
     line.clear();
+    readError = 0;
     char buffer[128];
     while (g_running.load() && idlePolls < pollLimit) {
         const ssize_t received = ::recv(fd, buffer, sizeof(buffer), 0);
         if (received == 0)
-            return false;
+            return ReadOutcome::PeerClosed;
         if (received < 0) {
             if (errno == EINTR)
                 continue;
-            if (errno != EAGAIN && errno != EWOULDBLOCK)
-                return false;
+            if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                readError = errno;
+                diagnostic("read-failed", fd, readError, socketGetLastResult());
+                return ReadOutcome::Error;
+            }
             ++idlePolls;
             sleepPoll();
             continue;
@@ -206,21 +237,24 @@ bool readLine(int fd, std::string& line, std::uint32_t& idlePolls,
             if (c == '\n') {
                 if (!line.empty() && line.back() == '\r')
                     line.pop_back();
-                return true;
+                return ReadOutcome::Line;
             }
-            if (line.size() >= kMaxCommandLength)
-                return false;
+            if (line.size() >= kMaxCommandLength) {
+                diagnostic("command-too-long", fd);
+                return ReadOutcome::TooLong;
+            }
             line.push_back(c);
         }
     }
-    return false;
+    return g_running.load() ? ReadOutcome::Timeout : ReadOutcome::Stopped;
 }
 
 void answerError(int fd, const char* reason) {
     char buffer[64];
     const int count = std::snprintf(buffer, sizeof(buffer), "ERR %s\n", reason);
     if (count > 0 && static_cast<std::size_t>(count) < sizeof(buffer))
-        (void)sendAll(fd, std::string_view(buffer, static_cast<std::size_t>(count)));
+        (void)sendAll(fd, std::string_view(buffer, static_cast<std::size_t>(count)),
+                      "protocol-error-response");
 }
 
 bool queueLaunch(int fd, const std::string& path) {
@@ -244,23 +278,32 @@ bool queueLaunch(int fd, const std::string& path) {
         }
     }
     if (isBusy)
-        return sendAll(fd, "ERR busy\n");
+        return sendAll(fd, "ERR busy\n", "busy-response");
     char response[64];
     const int count = std::snprintf(response, sizeof(response), "OK queued %llu\n",
                                     static_cast<unsigned long long>(id));
     const bool sent = count > 0 && static_cast<std::size_t>(count) < sizeof(response)
-        && sendAll(fd, std::string_view(response, static_cast<std::size_t>(count)));
+        && sendAll(fd, std::string_view(response, static_cast<std::size_t>(count)),
+                   "launch-response");
     if (wake)
         wake();
     return sent;
 }
 
-void serveClient(int fd) {
+const char* serveClient(int fd) {
     const int flags = ::fcntl(fd, F_GETFL, 0);
-    if (flags >= 0)
-        (void)::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-    if (!sendAll(fd, "SWITCHU 1\n"))
-        return;
+    if (flags < 0) {
+        diagnostic("accepted-fcntl-get-failed", fd, errno);
+        return "fcntl-get-failed";
+    }
+    if (::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        diagnostic("accepted-fcntl-set-failed", fd, errno);
+        return "fcntl-set-failed";
+    }
+    diagnostic("accepted-nonblocking", fd);
+    if (!sendAll(fd, "SWITCHU 1\n", "greeting-send"))
+        return "greeting-send-failed";
+    diagnostic("greeting-sent", fd);
 
     bool authenticated = false;
     std::uint32_t idlePolls = 0;
@@ -268,56 +311,83 @@ void serveClient(int fd) {
         std::string line;
         const std::uint32_t pollLimit = authenticated
             ? kClientIdlePollLimit : kUnauthenticatedIdlePollLimit;
-        if (!readLine(fd, line, idlePolls, pollLimit))
-            break;
+        int readError = 0;
+        const ReadOutcome readResult = readLine(fd, line, idlePolls, pollLimit, readError);
+        if (readResult != ReadOutcome::Line) {
+            if (readResult == ReadOutcome::PeerClosed)
+                return "peer-closed";
+            if (readResult == ReadOutcome::Timeout) {
+                diagnostic("client-timeout", fd, ETIMEDOUT);
+                return "client-timeout";
+            }
+            if (readResult == ReadOutcome::Error)
+                return "read-failed";
+            if (readResult == ReadOutcome::TooLong)
+                return "command-too-long";
+            return "server-stopping";
+        }
         idlePolls = 0;
         const Command command = parseCommand(line);
         if (command.kind == CommandKind::Auth) {
             if (!constantTimeEqual(command.argument, g_code)) {
-                (void)sendAll(fd, "ERR auth\n");
-                break;
+                diagnostic("auth-failed", fd);
+                (void)sendAll(fd, "ERR auth\n", "auth-error-response");
+                return "auth-failed";
             }
             authenticated = true;
-            if (!sendAll(fd, "OK auth\n"))
-                break;
+            diagnostic("auth-ok", fd);
+            if (!sendAll(fd, "OK auth\n", "auth-ok-response"))
+                return "auth-response-failed";
             continue;
         }
         if (!authenticated) {
-            (void)sendAll(fd, "ERR auth\n");
-            break;
+            diagnostic("auth-required", fd);
+            (void)sendAll(fd, "ERR auth\n", "auth-required-response");
+            return "auth-required";
         }
         if (command.kind == CommandKind::Status) {
             sendStatus(fd);
         } else if (command.kind == CommandKind::Launch) {
             if (!queueLaunch(fd, command.argument))
-                break;
+                return "launch-response-failed";
         } else if (command.kind == CommandKind::InvalidPath) {
             answerError(fd, "invalid-path");
         } else {
             answerError(fd, "invalid-command");
         }
     }
+    return "server-stopping";
 }
 
 int openListener() {
     const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0)
+    if (fd < 0) {
+        diagnostic("socket-create-failed", -1, errno, socketGetLastResult());
         return -1;
+    }
     int yes = 1;
-    (void)::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+    if (::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0)
+        diagnostic("listener-reuseaddr-failed", fd, errno, socketGetLastResult());
     const int flags = ::fcntl(fd, F_GETFL, 0);
-    if (flags < 0 || ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+    if (flags < 0) {
+        diagnostic("listener-fcntl-get-failed", fd, errno);
+        closeSocket(fd);
+        return -1;
+    }
+    if (::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        diagnostic("listener-fcntl-set-failed", fd, errno);
         closeSocket(fd);
         return -1;
     }
     sockaddr_in address{};
     address.sin_len = sizeof(address);
     address.sin_family = AF_INET;
-    address.sin_port = htons(g_port);
+    address.sin_port = htons(kDefaultPort);
     address.sin_addr.s_addr = htonl(INADDR_ANY);
     if (::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) < 0
         || ::listen(fd, 2) < 0) {
         const int error = errno;
+        diagnostic("listener-bind-or-listen-failed", fd, error, socketGetLastResult());
         closeSocket(fd);
         switchu::FileLog::log("[remote-nro] listener setup failed errno=%d; retrying", error);
         return -1;
@@ -330,18 +400,19 @@ void serverThread(void*) {
     while (g_running.load()) {
         if (!socketReady) {
             const SocketInitConfig socketConfig = {
-                .tcp_tx_buf_size = 0x4000,
-                .tcp_rx_buf_size = 0x4000,
-                .tcp_tx_buf_max_size = 0,
-                .tcp_rx_buf_max_size = 0,
+                .tcp_tx_buf_size = 0x8000,
+                .tcp_rx_buf_size = 0x8000,
+                .tcp_tx_buf_max_size = 0x10000,
+                .tcp_rx_buf_max_size = 0x10000,
                 .udp_tx_buf_size = 0,
                 .udp_rx_buf_size = 0,
-                .sb_efficiency = 1,
+                .sb_efficiency = 4,
                 .num_bsd_sessions = 3,
                 .bsd_service_type = BsdServiceType_User,
             };
             const Result rc = socketInitialize(&socketConfig);
             if (R_FAILED(rc)) {
+                diagnostic("socket-init-failed", -1, 0, rc);
                 switchu::FileLog::log("[remote-nro] socket init failed: 0x%X; retrying", rc);
                 for (unsigned int i = 0; i < 40 && g_running.load(); ++i)
                     svcSleepThread(50'000'000ULL);
@@ -356,7 +427,8 @@ void serverThread(void*) {
                 svcSleepThread(50'000'000ULL);
             continue;
         }
-        switchu::FileLog::log("[remote-nro] listener ready port=%u", g_port);
+        diagnostic("listener-ready");
+        switchu::FileLog::log("[remote-nro] listener ready port=%u", kDefaultPort);
 
         while (g_running.load()) {
             sockaddr_in clientAddress{};
@@ -364,11 +436,14 @@ void serverThread(void*) {
             const int client = ::accept(listener,
                 reinterpret_cast<sockaddr*>(&clientAddress), &addressLength);
             if (client >= 0) {
-                serveClient(client);
+                diagnostic("accepted", client);
+                const char* closeReason = serveClient(client);
+                diagnostic(closeReason ? closeReason : "connection-closed", client);
                 closeSocket(client);
                 continue;
             }
             if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+                diagnostic("accept-failed", listener, errno, socketGetLastResult());
                 switchu::FileLog::log("[remote-nro] accept failed errno=%d; retrying", errno);
                 break;
             }
@@ -401,7 +476,6 @@ bool start(void (*wake)()) {
         if (g_started)
             return true;
         g_code = std::move(settings.code);
-        g_port = settings.port;
         g_wake = wake;
         g_running.store(true);
         Result rc = threadCreate(&g_thread, serverThread, nullptr, nullptr,
@@ -424,6 +498,7 @@ bool start(void (*wake)()) {
         }
         g_started = true;
     }
+    diagnostic("remote channel v2");
     switchu::FileLog::log("[remote-nro] service thread started");
     return true;
 }

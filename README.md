@@ -34,7 +34,7 @@ returned by the system account list. Other launchers retain their user picker.
 Games that do not use accounts are launched without a preselected user.
 
 After a successful launch, the daemon waits two seconds, waits for AM to confirm
-the foreground transfer, and reopens Breeze. Automatic returns prefer the
+the foreground transfer, and reopens Breeze. Boot, HOME and automatic returns prefer the
 dedicated Album loader bundled with the daemon over a User Page override that
 may belong to another homebrew. PC Connect can then reconnect without HOME.
 Failed launches are retried after two seconds until Breeze announces it is
@@ -92,6 +92,9 @@ status and never automatically repeats an ambiguous launch request.
 One-shot request/receipt files are cleared at boot and after the holder
 closes, preventing an interrupted launch from replaying. Diagnostics are in
 `sdmc:/logs/SwitchU/`; old logs in `config/SwitchU` are left intact.
+The endpoint also appends short transport diagnostics to
+`sdmc:/logs/SwitchU/remote-nro.log`, opening and closing that file per event so
+it can be collected while the daemon is running. Pairing codes are never logged.
 
 ## Screenshots
 

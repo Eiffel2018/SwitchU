@@ -13,11 +13,11 @@ constexpr bool isBreezeStartRequest(bool appletActive, bool breezeCandidate,
     return appletActive && breezeCandidate && breezeIdentified && !applicationRunning;
 }
 
-// A User Page override can belong to another homebrew launcher. For an
-// automatic return use the known Breeze loader shipped with this daemon.
-constexpr bool useBreezeUserPage(bool automaticReturn, bool albumLoaderReady,
+// A User Page override may be stale or belong to another launcher. The
+// daemon's bundled loader is authoritative at boot, HOME and automatic return.
+constexpr bool useBreezeUserPage(bool /*automaticReturn*/, bool albumLoaderReady,
                                   bool userPageOverridePresent) {
-    return userPageOverridePresent && !(automaticReturn && albumLoaderReady);
+    return userPageOverridePresent && !albumLoaderReady;
 }
 
 constexpr bool canRetryBreezeReturn(std::uint64_t requestedSession,

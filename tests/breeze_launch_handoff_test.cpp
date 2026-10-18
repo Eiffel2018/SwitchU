@@ -14,8 +14,10 @@ int main() {
     assert(!useBreezeUserPage(true, true, false));
     assert(useBreezeUserPage(true, false, true));
     assert(!useBreezeUserPage(true, false, false));
-    assert(useBreezeUserPage(false, true, true)); // normal HOME behavior preserved
+    assert(!useBreezeUserPage(false, true, true)); // boot/HOME also avoid a broken override
     assert(!useBreezeUserPage(false, true, false));
+    assert(useBreezeUserPage(false, false, true));
+    assert(!useBreezeUserPage(false, false, false));
     // Failures may retry only the still-current requested session. A manual
     // cancel (target zero), replacement or game exit cannot restart the loop.
     using switchu::daemon::canRetryBreezeReturn;

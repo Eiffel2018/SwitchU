@@ -5,6 +5,8 @@
 
 namespace switchu::daemon::remote {
 
+constexpr const char* kRemoteChannelVersionMarker = "remote channel v2";
+
 struct Request {
     std::uint64_t id = 0;
     std::string path;
