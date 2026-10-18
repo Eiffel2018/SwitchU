@@ -87,6 +87,15 @@ check. Breeze's existing Game input, Show/Hide and other functions retain 6801.
 Show/Hide changes the overlay while the game keeps running; HOME switches
 foreground between the game and NRO with the corresponding pause/resume.
 
+Transport **v5** adds authenticated `capture`: a JPEG of the current console
+display, including other NROs while Breeze is closed. Its reply is
+`OK capture bytes=N width=1280 height=720 format=jpeg`, followed by exactly N
+binary bytes (at most 512 KiB). This does not press Capture or write an album
+file. Python callers use `switchu_remote.capture(host, code)`.
+BreezePC's live picture and Screenshot/F12 prefer this 6802 path independently
+of the 6801 connection; Breeze-only installations retain the original 6801
+capture fallback. Capture is read-only and does not attach a controller.
+
 The controller is shared by the daemon's serialized input worker. Each bounded
 operation now neutralizes input, detaches its virtual device, releases its HDLS
 work buffer and closes its HID debug service, including failure cleanup. It

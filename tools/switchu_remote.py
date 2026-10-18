@@ -91,9 +91,14 @@ def validate_sd_path(path: str) -> str:
     return path
 
 
-def _read_line(sock: socket.socket, limit: int = 4096) -> str:
+def _read_line(sock: socket.socket, limit: int = 4096, *, deadline=None) -> str:
     data = bytearray()
     while len(data) < limit:
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("SwitchU reply deadline expired")
+            sock.settimeout(remaining)
         chunk = sock.recv(1)
         if not chunk:
             raise ConnectionError("SwitchU closed the connection")
@@ -258,16 +263,17 @@ def capture(host: str, code: str, *, port: int = DEFAULT_PORT,
     """Read the console's current 1280x720 JPEG without opening Breeze."""
     if not code or "\n" in code or "\r" in code:
         raise ValueError("PC connect code is empty or invalid")
+    deadline = time.monotonic() + timeout
     try:
         with socket.create_connection((host, port), timeout=timeout) as sock:
             sock.settimeout(timeout)
-            if _read_line(sock) != "SWITCHU 1":
+            if _read_line(sock, deadline=deadline) != "SWITCHU 1":
                 raise RemoteError("SwitchU remote channel is unavailable or incompatible")
             sock.sendall(("auth " + code + "\n").encode("utf-8"))
-            if _read_line(sock) != "OK auth":
+            if _read_line(sock, deadline=deadline) != "OK auth":
                 raise RemoteError("SwitchU authentication failed")
             sock.sendall(b"capture\n")
-            header = _read_line(sock)
+            header = _read_line(sock, deadline=deadline)
             if header.startswith("ERR "):
                 raise RemoteError(header[4:])
             match = re.fullmatch(r"OK capture bytes=([1-9]\d*) width=1280 height=720 format=jpeg", header)
@@ -276,7 +282,6 @@ def capture(host: str, code: str, *, port: int = DEFAULT_PORT,
             size = int(match[1])
             if not 4 <= size <= 0x80000:
                 raise RemoteError("SwitchU capture size is out of bounds")
-            deadline = time.monotonic() + timeout
             data = bytearray()
             while len(data) < size:
                 remaining = deadline - time.monotonic()

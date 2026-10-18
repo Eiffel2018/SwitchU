@@ -243,12 +243,15 @@ class Link(threading.Thread):
         self.stop = False
         self.recorder = None
         self.retarget_to = None      # (host, code) to switch to
+        self.capture_lock = threading.Lock()
+        self.connected = threading.Event()
 
     def send(self, line):
         self.jobs.put(line)
 
     def retarget(self, host, code):
         """Drop the connection and connect to another Switch (or with another code)."""
+        self.connected.clear()
         self.retarget_to = (host, code)
 
     def run(self):
@@ -259,16 +262,19 @@ class Link(threading.Thread):
             b = None
             try:
                 b = Breeze(self.host, self.code, timeout=10)
+                self.connected.set()
                 self.out.put(("status", "connected: " + b.banner))
                 b.cmd("events on")
                 self.loop(b)
             except Exception as e:  # noqa: BLE001 - shown, then retried
+                self.connected.clear()
                 self.out.put(("status", "disconnected: %s (retrying)" % e))
                 for _ in range(30):
                     if self.stop or self.retarget_to is not None:
                         break
                     time.sleep(0.1)
             finally:
+                self.connected.clear()
                 if b is not None:
                     b.close()
 
@@ -306,7 +312,11 @@ class Link(threading.Thread):
                 rec = self.recorder
                 if rec is not None and line.split()[0] not in QUIET:
                     rec.note("cmd", line)
-                reply = b.cmd(line)
+                if line == "capture":
+                    with self.capture_lock:
+                        reply = b.cmd(line)
+                else:
+                    reply = b.cmd(line)
                 if isinstance(reply, tuple):
                     if line.startswith("saveshot "):
                         self.out.put(("shot", line.split()[1], reply[1]))
@@ -325,7 +335,10 @@ class Link(threading.Thread):
                 time.sleep(0.03)
             elif self.capture_on.is_set() and time.time() >= next_capture:
                 next_capture = time.time() + 1.0 / max(self.fps, 0.5)
-                reply = b.cmd("capture")
+                with self.capture_lock:
+                    reply = b.cmd("capture") if self.capture_on.is_set() else None
+                if reply is None:
+                    continue
                 if isinstance(reply, tuple):
                     self.out.put(("frame", reply[1]))
                     rec = self.recorder
@@ -340,6 +353,128 @@ class Link(threading.Thread):
                     b.cmd("ping")
                     time.sleep(0.25)
             self.drain_events(b)
+
+
+class ScreenCaptureWorker(threading.Thread):
+    """Get screen pictures over SwitchU 6802, falling back to Breeze's 6801 capture."""
+
+    RETRY_SECONDS = 3.0
+    MAX_FPS = 10.0
+
+    def __init__(self, app):
+        super().__init__(daemon=True)
+        self.app = app
+        self.jobs = queue.Queue()
+        self.stop_event = threading.Event()
+        self._credentials_lock = threading.Lock()
+        self._target_credentials = (app.cfg["host"], app.cfg["code"])
+        self._credentials_generation = 0
+        self.retry_after = 0.0
+        self.last_error = ""
+
+    def retarget(self, host, code):
+        with self._credentials_lock:
+            self._target_credentials = (host, code)
+            self._credentials_generation += 1
+            self.retry_after = 0.0
+            self.last_error = ""
+
+    def request_screenshot(self):
+        self.jobs.put("screenshot")
+
+    def stop(self):
+        self.stop_event.set()
+        self.jobs.put(None)
+
+    def _snapshot_credentials(self):
+        with self._credentials_lock:
+            return self._target_credentials, self._credentials_generation
+
+    def _same_credentials(self, generation):
+        with self._credentials_lock:
+            return generation == self._credentials_generation
+
+    def _fallback(self, message):
+        self.retry_after = time.monotonic() + self.RETRY_SECONDS
+        self.last_error = str(message)
+        if self.app.link.picture and self.app.capture_requested.is_set():
+            self.app.link.capture_on.set()
+        else:
+            self.app.link.capture_on.clear()
+        self.app.out.put(("status", "SwitchU screen capture unavailable; using Breeze capture: %s" % message))
+
+    def capture_live_once(self):
+        if time.monotonic() < self.retry_after:
+            self.app.link.capture_on.set()
+            return False
+        credentials, generation = self._snapshot_credentials()
+        try:
+            with self.app.link.capture_lock:
+                self.app.link.capture_on.clear()
+                data = switchu_remote.capture(*credentials, timeout=3.0)
+        except Exception as exc:  # noqa: BLE001 - any transport/protocol failure uses 6801 fallback
+            if self._same_credentials(generation):
+                self._fallback(exc)
+            return False
+        if not self._same_credentials(generation) or self.stop_event.is_set():
+            return False
+        self.retry_after = 0.0
+        self.last_error = ""
+        self.app.link.capture_on.clear()
+        self.app.out.put(("frame", data))
+        recorder = self.app.recorder
+        if recorder is not None:
+            recorder.frame(data)
+        return True
+
+    def capture_screenshot_once(self):
+        if time.monotonic() < self.retry_after:
+            self.app.link.send("capture")
+            return False
+        credentials, generation = self._snapshot_credentials()
+        try:
+            with self.app.link.capture_lock:
+                self.app.link.capture_on.clear()
+                data = switchu_remote.capture(*credentials, timeout=3.0)
+        except Exception as exc:  # noqa: BLE001 - read-only capture is safe to fall back to 6801
+            if self._same_credentials(generation):
+                self._fallback(exc)
+                self.app.link.send("capture")
+            return False
+        if not self._same_credentials(generation) or self.stop_event.is_set():
+            return False
+        self.retry_after = 0.0
+        self.last_error = ""
+        self.app.out.put(("screenshot", data))
+        return True
+
+    def run(self):
+        next_capture = 0.0
+        while not self.stop_event.is_set():
+            try:
+                job = self.jobs.get(timeout=0.05)
+            except queue.Empty:
+                job = None
+            if job == "screenshot":
+                self.capture_screenshot_once()
+                continue
+            if job is None and self.stop_event.is_set():
+                break
+            live = self.app.link.picture and self.app.capture_requested.is_set()
+            if not live:
+                self.app.link.capture_on.clear()
+                next_capture = 0.0
+                continue
+            now = time.monotonic()
+            if now < next_capture:
+                continue
+            try:
+                fps = float(self.app.link.fps)
+            except (TypeError, ValueError):
+                fps = 6.0
+            fps = max(0.5, min(self.MAX_FPS, fps))
+            next_capture = now + 1.0 / fps
+            self.capture_live_once()
 
 
 class _XGamepad(ctypes.Structure):
@@ -651,7 +786,7 @@ class App:
         root.bind("<KeyRelease>", self.on_key_up)
         root.bind("<F12>", lambda e: self.on_screenshot())
         root.protocol("WM_DELETE_WINDOW", self.on_close)
-        root.bind("<FocusIn>", lambda e: self.link.capture_on.set())
+        root.bind("<FocusIn>", self.on_focus_in)
         root.bind("<FocusOut>", self.on_focus_out)
         self.canvas.bind("<Configure>", self.on_resize)
         self.canvas.bind("<Button-1>", self.on_click)
@@ -661,12 +796,22 @@ class App:
         self.out = queue.Queue()
         self.link = Link(host, code, self.out)
         self.link.start()
+        self.capture_requested = threading.Event()
+        self.capture_requested.set()
+        self.screen_capture = ScreenCaptureWorker(self)
+        self.screen_capture.start()
         root.after(30, self.pump)
         root.after(1500, self.poll_save)
 
     # ------------------------------------------------------------ input
     def press(self, chord):
+        if not self.link.connected.is_set():
+            self.breeze_unavailable()
+            return
         self.link.send("press " + chord)
+
+    def breeze_unavailable(self):
+        self.status.config(text="Breeze is closed; use controller for NRO.")
 
     def game_key(self, e):
         return GAME_KEYS.get(e.keysym) or GAME_KEYS.get(e.keysym.lower())
@@ -831,7 +976,7 @@ class App:
                 self.album.set_folder(self.game_dir("album"), self.game_label())
 
     def on_screenshot(self):
-        self.link.send("capture")
+        self.screen_capture.request_screenshot()
 
     def save_screenshot(self, data):
         try:
@@ -875,7 +1020,7 @@ class App:
             self.link.recorder = self.recorder
             if self.pad is not None:
                 self.pad.recorder = self.recorder
-            self.link.capture_on.set()   # also while the window is not in front
+            self.capture_requested.set()   # also while the window is not in front
             self.status.config(text="recording to " + folder)
         else:
             self.stop_record()
@@ -888,6 +1033,9 @@ class App:
         if rec is not None:
             rec.close()
             self.status.config(text="recorded %d pictures in %s" % (rec.frames, rec.folder))
+        if self.root.focus_get() is None:
+            self.capture_requested.clear()
+            self.link.capture_on.clear()
 
     def on_text(self):
         if self.text_open():
@@ -913,6 +1061,9 @@ class App:
     def on_close(self):
         self.switchu_generation += 1
         self.stop_record()
+        self.screen_capture.stop()
+        self.screen_capture.join(3.2)
+        self.link.connected.clear()
         if self.text_open():
             self.text.close()
         if self.asm is not None and self.asm.alive():
@@ -930,6 +1081,11 @@ class App:
             if name:
                 self.pad.key(name, True)
             return "break"
+        if not self.link.connected.is_set():
+            if e.keysym in ROW_KEYS or KEYS.get(e.keysym) or KEYS.get(e.keysym.lower()):
+                self.breeze_unavailable()
+                return "break"
+            return
         if e.keysym in ROW_KEYS:
             self.link.send("#rows %d" % ROW_KEYS[e.keysym])
             return "break"
@@ -1320,9 +1476,13 @@ class App:
         # gets the text box when it opens.
         if self.root.focus_get() is None:
             if self.recorder is None:
+                self.capture_requested.clear()
                 self.link.capture_on.clear()
             if self.pad is not None:
                 self.pad.release_keys()  # their key-up events go elsewhere
+
+    def on_focus_in(self, _e=None):
+        self.capture_requested.set()
 
     def to_screen(self, x, y):
         return x * SCREEN_W / self.view_w, y * SCREEN_H / self.view_h
@@ -1346,6 +1506,8 @@ class App:
         h = None if self.state.get("keyboard") else self.hit(x, y)
         if self.pad is not None and self.state.get("overlay") == "hidden":
             self.pad.send("gametouch %d %d" % (min(int(x), SCREEN_W - 1), min(int(y), SCREEN_H - 1)))
+        elif not self.link.connected.is_set():
+            self.breeze_unavailable()
         elif h and h[0] == "button":
             self.link.send("button %d" % h[1])
         elif h:
@@ -1357,19 +1519,31 @@ class App:
         if self.state.get("keyboard"):
             self.on_click(e)  # each click is a key press on Breeze's keyboard
             return
+        if not self.link.connected.is_set():
+            self.breeze_unavailable()
+            return
         h = self.hit(*self.to_screen(e.x, e.y))
         if h and h[0] == "row":
             self.link.send("select %d" % h[1])
             self.press("A")
 
     def on_wheel(self, e):
+        if not self.link.connected.is_set():
+            self.breeze_unavailable()
+            return
         self.press("UP" if e.delta > 0 else "DOWN")
 
     def kbd_send(self, _e):
+        if not self.link.connected.is_set():
+            self.breeze_unavailable()
+            return "break"
         self.link.send("text " + self.kbd_entry.get())
         return "break"
 
     def kbd_cancel(self, _e):
+        if not self.link.connected.is_set():
+            self.breeze_unavailable()
+            return "break"
         self.link.send("cancel")
         return "break"
 
@@ -1577,6 +1751,7 @@ class App:
         self.root.title("Breeze PC - %s" % host)
         self.state = {}
         self.link.retarget(host, code)
+        self.screen_capture.retarget(host, code)
 
     def on_multi_instance(self):
         self.cfg["multi_instance"] = bool(self.multi_var.get())

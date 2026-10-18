@@ -57,6 +57,13 @@ The original NRO/button protocol was tested with daemon `d810bfa`. A loader
 automatically replayed. No sys-botbase module is required.
 
 The controller fixes remain a development build pending physical acceptance.
+Daemon transport **v5** also supplies the current console JPEG over 6802.
+The live picture and Screenshot/F12 prefer it even while Breeze is closed;
+an unavailable 6802 channel falls back to the original Breeze capture, with
+three seconds between retries. Capture runs independently of the Breeze
+menu connection and is capped at ten frames per second. A disconnected
+Breeze menu cannot receive clicks using stale button rectangles from an NRO
+picture; the independent controller remains available.
 Upstream PR #1 is closed. Reopening or submitting a PR requires successful
 NRO launch with Breeze closed, HOME, all 26 UI operations, controller cleanup,
 emergency OFF, physical-controller reconnection and reboot recovery checks.
