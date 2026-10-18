@@ -106,8 +106,11 @@ capture fallback. Capture is read-only and does not attach a controller.
 The touch extension adds single-finger gestures over the same 6802 input
 gate: `touch tap X Y MS`, `touch double X Y MS GAP_MS`, and
 `touch long X Y MS`. Coordinates use the 1280×720 screenshot (X 0–1279,
-Y 0–719). Tap/double holds are 1–300 ms, double gaps 50–500 ms, and long
-holds 300–5000 ms. Each complete gesture is serialized, publishes a lift,
+Y 0–719). The tested HOS clamps the outer border to X 15–1264 / Y 15–704;
+interior coordinates arrive unchanged. The reply acknowledges the requested
+coordinate, not an independently observed touch position. Tap/double holds
+are 1–300 ms, double gaps 50–500 ms, and long holds 300–5000 ms.
+Each complete gesture is serialized, publishes a lift,
 then unsets touch autopilot; it does not create a virtual gamepad or occupy
 a player slot. `controller off` also cleans up this module's touch override.
 Python: `switchu_remote.touch(host, code, 640, 360, gesture="double")`.

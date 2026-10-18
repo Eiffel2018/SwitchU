@@ -83,8 +83,11 @@ in both downloadable packages.
 ## Touch extension (hardware acceptance pending)
 
 SwitchU controls now include X/Y coordinates (1280×720), tap/double/long mode,
-hold milliseconds, double-tap gap and **Send Touch**. The same explicit input
-enable/OFF gate applies. Enable **Touch preview via 6802** to click the picture,
+hold milliseconds, double-tap gap and **Send Touch**. The tested console
+clamps the outer 15-pixel border (X 15–1264,
+Y 15–704); interior coordinates are unchanged. Replies echo the request, not
+an observed HID position. The same explicit input enable/OFF gate applies.
+Enable **Touch preview via 6802** to click the picture,
 double-click, or hold then release. A single click waits 550 ms so a double
 click becomes one double-tap request. Clicks outside the picture and dragging
 are rejected; original Breeze mouse/menu behavior is preserved when disabled.

@@ -1169,7 +1169,7 @@ class App:
         win = tk.Toplevel(self.root)
         win.title("SwitchU Controller")
         win.resizable(False, False)
-        win.geometry("800x800")
+        win.geometry("800x830")
         self.switchu_controller = win
         self.switchu_input_buttons = []
         self.switchu_input_canvases = []
@@ -1200,7 +1200,8 @@ class App:
         self.switchu_touch_send_btn.pack(side="left", padx=3)
         self.switchu_input_buttons.append(self.switchu_touch_send_btn)
         tk.Label(win, text="1280×720 coordinates. Preview: click, double-click, or hold then release. "
-                 "Touch is sent once; drag is not supported.").pack(anchor="w", padx=12)
+                 "Console edges may clamp by 15 px. Drag is not supported.",
+                 wraplength=760, justify="left").pack(anchor="w", padx=12)
         canvas = tk.Canvas(win, width=780, height=670, bg="#f5f7fa", highlightthickness=0)
         canvas.pack(padx=10, pady=8)
         self.switchu_controller_canvas = canvas
