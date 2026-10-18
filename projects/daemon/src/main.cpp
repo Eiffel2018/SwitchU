@@ -2907,6 +2907,18 @@ static bool processRemoteNroRequest() {
         return true;
     }
 
+    // The previous holder can restore qlaunch's foreground before this request
+    // reaches the branch above. Its ChangeIntoForeground message then skips the
+    // explicit request path, but the application model may still say Foreground
+    // (notably after closing a Breeze overlay). Launching an AllForeground NRO
+    // without synchronizing it makes the first HOME reclaim the NRO instead of
+    // resuming the game. qlaunch is confirmed foreground here, so commit the
+    // same application transition as the explicit foreground-request path.
+    if (daemon::app::isRunning() && daemon::app::hasForeground()) {
+        daemon::app::onHomeSuspend();
+        switchu::FileLog::log("[remote-nro] synchronized suspended game before loader launch");
+    }
+
     const auto request = g_remoteNroRequest;
     SwitchUNroLaunchInput input{};
     input.magic = SWITCHU_NRO_LAUNCH_MAGIC;
