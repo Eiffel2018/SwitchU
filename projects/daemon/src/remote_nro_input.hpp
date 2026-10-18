@@ -6,7 +6,7 @@ namespace switchu::remote_input {
 
 // Lazily creates a virtual controller owned by this module, then performs one
 // bounded press. The returned libnx Result is the first failure, or 0.
-// Accepts ordinary game/UI buttons and the hiddbg HOME bit; never Capture.
+// Accepts ordinary game/UI, HOME/Capture, and the four Joy-Con rail buttons.
 Result pressButton(u64 button, u32 holdMs);
 
 // Bounded analog impulse; positive Y is up. Both axes return to center before

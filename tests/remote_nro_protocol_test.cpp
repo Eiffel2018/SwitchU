@@ -13,9 +13,14 @@ int main() {
         assert(parseCommand("press LEFT 1").buttonMask == (1ULL << 12));
         assert(parseCommand("press DOWN 1000").buttonMask == (1ULL << 15));
         assert(parseCommand("press HOME 100").buttonMask == (1ULL << 18));
+        assert(parseCommand("press CAPTURE 100").buttonMask == (1ULL << 19));
+        assert(parseCommand("press LSL 100").buttonMask == (1ULL << 24));
+        assert(parseCommand("press LSR 100").buttonMask == (1ULL << 25));
+        assert(parseCommand("press RSL 100").buttonMask == (1ULL << 26));
+        assert(parseCommand("press RSR 100").buttonMask == (1ULL << 27));
         for (const char* bad : {"press A 0", "press A 1001", "press A -1",
              "press A 999999999999999999999", "press A 100x", "press A 100 extra",
-             "press A ", "press CAPTURE 100", "press A+B 100", "press a 100"})
+             "press A ", "press SYNC 100", "press A+B 100", "press a 100"})
             assert(parseCommand(bad).kind == CommandKind::Invalid);
     }
     {

@@ -9,8 +9,11 @@ namespace {
 constexpr u32 kMaxHoldMs = 1000;
 constexpr size_t kWorkBufferAlignment = 0x1000;
 constexpr size_t kWorkBufferSize = 0x1000;
-constexpr u64 kAllowedButtons = 0xFFFFULL | HiddbgNpadButton_Home;
+constexpr u64 kAllowedButtons = 0xFFFFULL | HiddbgNpadButton_Home | HiddbgNpadButton_Capture
+    | HidNpadButton_LeftSL | HidNpadButton_LeftSR | HidNpadButton_RightSL | HidNpadButton_RightSR;
 static_assert(HiddbgNpadButton_Home == (1ULL << 18));
+static_assert(HiddbgNpadButton_Capture == (1ULL << 19));
+static_assert(HidNpadButton_LeftSL == (1ULL << 24) && HidNpadButton_RightSR == (1ULL << 27));
 
 std::mutex g_mutex;
 bool g_initialized = false;

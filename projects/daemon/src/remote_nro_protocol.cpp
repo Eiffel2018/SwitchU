@@ -92,6 +92,13 @@ Command parseCommand(std::string_view line) {
         }
         if (key == "HOME")
             return {CommandKind::Press, "HOME", ms, 1ULL << 18};
+        if (key == "CAPTURE")
+            return {CommandKind::Press, "CAPTURE", ms, 1ULL << 19};
+        constexpr const char* rails[] = {"LSL", "LSR", "RSL", "RSR"};
+        for (unsigned i = 0; i < 4; ++i) {
+            if (key == rails[i])
+                return {CommandKind::Press, std::string(key), ms, 1ULL << (24 + i)};
+        }
         return {};
     }
     if (line.size() > launchPrefix.size()
