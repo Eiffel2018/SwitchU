@@ -62,7 +62,14 @@ reuses `enable` and `code` from `[PC connect]` in
 The endpoint stays available while Breeze is closed. Missing/disabled PC
 Connect settings disable it, and every connection requires the pairing code.
 
-The PC companion adds **Open Breeze**, **Open NRO...**, and **SwitchU status**.
+The PC companion adds **Open Breeze**, **Open NRO...**, **SwitchU status**,
+and a **SwitchU controller** window. The controller uses the same authenticated
+6802 endpoint while Breeze is closed; sys-botbase is not required. Each click
+sends one 100 ms button press and releases it. Accepted input does not prove
+that an NRO received it (controller assignment and NRO support still apply).
+The wire command is `press PLUS 100`, with standard buttons A/B/X/Y,
+L/R/ZL/ZR, PLUS/MINUS, LSTICK/RSTICK and UP/DOWN/LEFT/RIGHT. Holds are bounded
+to 1–1000 ms; the client never replays an uncertain input reply.
 Copy `tools/switchu_remote.py` next to BreezePC's `pcconnect_app.py` and apply
 `tools/breezepc-switchu.patch` to add the buttons. The supplied test bundle
 already contains the patched PC app. A script can also use:

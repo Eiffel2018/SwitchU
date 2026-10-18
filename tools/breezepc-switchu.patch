@@ -1,6 +1,8 @@
+diff --git a/pcconnect_app.py b/pcconnect_app.py
+index ffc77da..0781b6a 100644
 --- a/pcconnect_app.py
 +++ b/pcconnect_app.py
-@@ -110,6 +110,7 @@
+@@ -110,6 +110,7 @@ from pcconnect_files import FileManager, pc_folder_name  # noqa: E402
  from pcconnect_album import Album  # noqa: E402
  from pcconnect_text import TextView, plain  # noqa: E402
  from pc_game_history import clean as clean_game_history, remember as remember_game, valid_tid  # noqa: E402
@@ -8,7 +10,7 @@
  
  CONFIG = os.path.join(os.path.expanduser("~"), ".breeze_pc.json")
  SCREEN_W, SCREEN_H = 1280, 720
-@@ -523,6 +524,8 @@
+@@ -523,6 +524,8 @@ class App:
          self.view_w, self.view_h = 960, 540
          self.frames, self.fps_t0 = 0, time.time()
          self.last_reply = ""
@@ -17,7 +19,7 @@
  
          self.canvas = tk.Canvas(root, width=self.view_w, height=self.view_h, bg="black", highlightthickness=0)
          self.canvas.pack(fill="both", expand=True)
-@@ -534,6 +537,12 @@
+@@ -534,6 +537,16 @@ class App:
          tk.Button(bar, text="Hide", command=lambda: self.link.send("hide")).pack(side="left")
          tk.Button(bar, text="Reset", command=self.reset).pack(side="left")
          tk.Button(bar, text="Connect...", command=self.on_connect).pack(side="left")
@@ -27,10 +29,14 @@
 +        self.switchu_nro_btn.pack(side="left")
 +        self.switchu_status_btn = tk.Button(bar, text="SwitchU status", command=self.check_switchu_status)
 +        self.switchu_status_btn.pack(side="left")
++        self.switchu_controller_btn = tk.Button(bar, text="SwitchU controls", command=self.open_switchu_controller)
++        self.switchu_controller_btn.pack(side="left")
++        self.switchu_controller = None
++        self.switchu_input_buttons = []
          tk.Label(bar, text=" Keys:").pack(side="left")
          self.chord = tk.Entry(bar, width=14)
          self.chord.pack(side="left")
-@@ -801,6 +810,7 @@
+@@ -801,6 +814,7 @@ class App:
          return self.text is not None and self.text.alive()
  
      def on_close(self):
@@ -38,11 +44,10 @@
          self.stop_record()
          if self.text_open():
              self.text.close()
-@@ -848,6 +858,104 @@
-                                "Whatever Breeze is doing is dropped. The game and its cheats are not touched."):
+@@ -849,6 +863,156 @@ class App:
              self.link.send("restart now")
              self.status.config(text="restarting Breeze...")
-+
+ 
 +    def open_switchu_breeze(self):
 +        self.send_switchu_launch(switchu_remote.DEFAULT_BREEZE)
 +
@@ -63,6 +68,55 @@
 +        self.cfg["switchu_nro_path"] = path
 +        self.save_cfg()
 +        self.send_switchu_launch(path)
++
++    def open_switchu_controller(self):
++        if self.switchu_controller is not None and self.switchu_controller.winfo_exists():
++            self.switchu_controller.lift()
++            return
++        win = tk.Toplevel(self.root)
++        win.title("SwitchU Controller")
++        win.resizable(False, False)
++        self.switchu_controller = win
++        self.switchu_input_buttons = []
++        keys = ("A", "B", "X", "Y", "L", "R", "ZL", "ZR", "PLUS", "MINUS",
++                "LSTICK", "RSTICK", "UP", "DOWN", "LEFT", "RIGHT")
++        for index, key in enumerate(keys):
++            button = tk.Button(win, text=key, width=9,
++                               command=lambda name=key: self.send_switchu_button(name))
++            button.grid(row=index // 4, column=index % 4, padx=3, pady=3, sticky="nsew")
++            self.switchu_input_buttons.append(button)
++        tk.Label(win, text="Each click sends one 100 ms press. Acceptance does not confirm the NRO responded.",
++                 wraplength=340, justify="left").grid(row=4, column=0, columnspan=4, padx=6, pady=5)
++        win.protocol("WM_DELETE_WINDOW", self.close_switchu_controller)
++        self._set_switchu_buttons()
++
++    def close_switchu_controller(self):
++        if self.switchu_controller is not None:
++            self.switchu_controller.destroy()
++            self.switchu_controller = None
++            self.switchu_input_buttons = []
++
++    def send_switchu_button(self, button):
++        if self.switchu_busy:
++            self.status.config(text="A SwitchU request is pending; no button press was sent.")
++            return
++        self.switchu_busy = True
++        self._set_switchu_buttons()
++        generation = self.switchu_generation
++        host, code = self.cfg["host"], self.cfg["code"]
++        self.status.config(text="Sending one %s press (100 ms) to SwitchU..." % button)
++        threading.Thread(target=self._switchu_input_worker,
++                         args=(generation, host, code, button), daemon=True).start()
++
++    def _switchu_input_worker(self, generation, host, code, button):
++        try:
++            reply = switchu_remote.press_button(host, code, button, 100, timeout=3.0)
++            message = ("SwitchU accepted %s for 100 ms; this does not confirm the NRO responded." % button)
++        except switchu_remote.AmbiguousInputError as exc:
++            message = ("Button result unknown: %s. It was not resent." % exc)
++        except (switchu_remote.RemoteError, ValueError) as exc:
++            message = "SwitchU button press failed: %s" % exc
++        self.out.put(("switchu_remote", generation, True, message))
 +
 +    def check_switchu_status(self):
 +        if self.switchu_busy:
@@ -91,6 +145,9 @@
 +        self.switchu_breeze_btn.config(state=state)
 +        self.switchu_nro_btn.config(state=state)
 +        self.switchu_status_btn.config(state=state)
++        self.switchu_controller_btn.config(state=state)
++        for button in self.switchu_input_buttons:
++            button.config(state=state)
 +
 +    def _switchu_launch_worker(self, generation, host, code, path):
 +        try:
@@ -140,10 +197,11 @@
 +        except switchu_remote.RemoteError as exc:
 +            message = "SwitchU status unavailable: %s" % exc
 +        self.out.put(("switchu_remote", generation, True, message))
- 
++
      def set_fps(self):
          try:
-@@ -1110,6 +1218,9 @@
+             self.link.fps = float(self.fps_var.get())
+@@ -1110,6 +1274,9 @@ class App:
              self.game_var.set(False)
              self.on_game_input()
          self.cfg.update(host=host, code=code)
@@ -153,7 +211,7 @@
          self.save_cfg()
          self.root.title("Breeze PC - %s" % host)
          self.state = {}
-@@ -1419,6 +1530,13 @@
+@@ -1419,6 +1586,13 @@ class App:
                          self.last_reply = ""
                  elif item[0] == "status":
                      self.status.config(text=item[1])

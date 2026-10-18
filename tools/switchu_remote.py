@@ -31,6 +31,25 @@ class AmbiguousLaunchError(RemoteError):
     """The launch request was sent, but no receipt arrived; never resend it."""
 
 
+class AmbiguousInputError(RemoteError):
+    """The button press may have arrived, but no receipt arrived; never resend it."""
+
+
+INPUT_BUTTONS = frozenset((
+    "A", "B", "X", "Y", "L", "R", "ZL", "ZR", "PLUS", "MINUS",
+    "LSTICK", "RSTICK", "UP", "DOWN", "LEFT", "RIGHT",
+))
+
+
+def validate_input(button: str, duration_ms: int) -> tuple[str, int]:
+    if not isinstance(button, str) or button not in INPUT_BUTTONS:
+        raise ValueError("unsupported Switch button")
+    if (isinstance(duration_ms, bool) or not isinstance(duration_ms, int)
+            or not 1 <= duration_ms <= 1000):
+        raise ValueError("button duration must be between 1 and 1000 ms")
+    return button, duration_ms
+
+
 def validate_sd_path(path: str) -> str:
     """Validate an absolute SD NRO path accepted by the daemon protocol."""
     if not isinstance(path, str):
@@ -71,17 +90,25 @@ def _read_line(sock: socket.socket, limit: int = 4096) -> str:
 
 def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
             timeout: float = 3.0) -> str:
-    """Send one authenticated command. A launch is sent at most once."""
+    """Send one authenticated command. Launches and inputs are never replayed."""
     if not code or "\n" in code or "\r" in code:
         raise ValueError("PC connect code is empty or invalid")
-    if command != "status" and not command.startswith("launch "):
+    if command != "status" and not command.startswith(("launch ", "press ")):
         raise ValueError("unsupported SwitchU command")
     path = None
+    input_press = None
     if command.startswith("launch "):
         path = validate_sd_path(command[len("launch "):])
         command = "launch " + path
+    elif command.startswith("press "):
+        fields = command.split()
+        if len(fields) != 3:
+            raise ValueError("press requires a button and duration")
+        input_press = validate_input(fields[1], int(fields[2]) if fields[2].isdigit() else fields[2])
+        command = "press %s %d" % input_press
 
     sent_launch = False
+    sent_input = False
     try:
         with socket.create_connection((host, port), timeout=timeout) as sock:
             sock.settimeout(timeout)
@@ -95,24 +122,44 @@ def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
                     raise RemoteError(auth[4:])
                 raise RemoteError("SwitchU authentication failed")
             sent_launch = path is not None
+            sent_input = input_press is not None
             sock.sendall((command + "\n").encode("utf-8"))
             reply = _read_line(sock)
     except (OSError, ConnectionError, TimeoutError) as exc:
+        if sent_input:
+            raise AmbiguousInputError(
+                "button press was sent but its receipt was not received; do not repeat it automatically"
+            ) from exc
         if sent_launch:
             raise AmbiguousLaunchError(
                 "launch was sent but its receipt was not received; check status before retrying"
             ) from exc
         raise RemoteError("cannot reach SwitchU remote channel: %s" % exc) from exc
+    except RemoteError as exc:
+        if sent_input:
+            raise AmbiguousInputError(
+                "button press was sent but its receipt was invalid; do not repeat it automatically"
+            ) from exc
+        raise
 
     if reply.startswith("ERR "):
         raise RemoteError(reply[4:])
-    expected = "OK status " if path is None else "OK queued "
+    expected = ("OK pressed %s ms=%d" % input_press if input_press is not None
+                else "OK status " if path is None else "OK queued ")
     if not reply.startswith(expected):
+        if input_press is not None:
+            raise AmbiguousInputError(
+                "SwitchU returned no valid button receipt; the press may have been accepted"
+            )
         if path is not None:
             raise AmbiguousLaunchError(
                 "launch was sent but SwitchU returned no valid receipt; check status before retrying"
             )
         raise RemoteError("unexpected SwitchU status reply")
+    if input_press is not None and reply != expected:
+        raise AmbiguousInputError(
+            "SwitchU returned no valid button receipt; the press may have been accepted"
+        )
     if path is not None and re.fullmatch(r"OK queued [1-9]\d*", reply) is None:
         raise AmbiguousLaunchError("launch was sent but its receipt ID is invalid; check status before retrying")
     return reply
@@ -125,6 +172,13 @@ def status(host: str, code: str, *, port: int = DEFAULT_PORT, timeout: float = 3
 def launch(host: str, code: str, path: str = DEFAULT_BREEZE, *,
            port: int = DEFAULT_PORT, timeout: float = 3.0) -> str:
     return request(host, code, "launch " + validate_sd_path(path), port=port, timeout=timeout)
+
+
+def press_button(host: str, code: str, button: str, duration_ms: int = 100, *,
+                 port: int = DEFAULT_PORT, timeout: float = 3.0) -> str:
+    button, duration_ms = validate_input(button, duration_ms)
+    return request(host, code, "press %s %d" % (button, duration_ms),
+                   port=port, timeout=timeout)
 
 
 def request_id(reply: str) -> int | None:

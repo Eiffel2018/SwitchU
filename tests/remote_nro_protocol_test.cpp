@@ -7,6 +7,17 @@ using namespace switchu::daemon::remote;
 
 int main() {
     {
+        const auto key = parseCommand("press PLUS 100");
+        assert(key.kind == CommandKind::Press && key.argument == "PLUS");
+        assert(key.holdMs == 100 && key.buttonMask == (1ULL << 10));
+        assert(parseCommand("press LEFT 1").buttonMask == (1ULL << 12));
+        assert(parseCommand("press DOWN 1000").buttonMask == (1ULL << 15));
+        for (const char* bad : {"press A 0", "press A 1001", "press A -1",
+             "press A 999999999999999999999", "press A 100x", "press A 100 extra",
+             "press A ", "press HOME 100", "press A+B 100", "press a 100"})
+            assert(parseCommand(bad).kind == CommandKind::Invalid);
+    }
+    {
         const Command command = parseCommand("AuTh 0037");
         assert(command.kind == CommandKind::Auth);
         assert(command.argument == "0037");

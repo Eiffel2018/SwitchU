@@ -131,6 +131,39 @@ class SwitchURemoteTests(unittest.TestCase):
         self.assertFalse(any(server.auth_lines))
         self.assertEqual(server.commands, [])
 
+    def test_press_button_sends_one_supported_input_and_validates_receipt(self):
+        server = self.with_server(command_reply="OK pressed PLUS ms=100")
+        reply = remote.press_button("127.0.0.1", "pair", "PLUS", 100, port=server.port)
+        self.assertEqual(reply, "OK pressed PLUS ms=100")
+        self.assertEqual(server.commands, ["press PLUS 100"])
+
+    def test_invalid_input_button_or_duration_is_rejected_before_network(self):
+        server = self.with_server()
+        for button, duration in (("HOME", 100), ("plus", 100), ("A\nstatus", 100),
+                                 ("A", 0), ("A", 1001), ("A", True), ("A", "100")):
+            with self.subTest(button=button, duration=duration), self.assertRaises(ValueError):
+                remote.press_button("127.0.0.1", "pair", button, duration, port=server.port)
+        self.assertEqual(server.commands, [])
+
+    def test_ambiguous_input_is_not_retried(self):
+        server = self.with_server(close_after_command=True)
+        with self.assertRaises(remote.AmbiguousInputError):
+            remote.press_button("127.0.0.1", "pair", "PLUS", 100,
+                                port=server.port, timeout=0.5)
+        self.assertEqual(server.commands, ["press PLUS 100"])
+
+    def test_invalid_input_success_receipt_is_ambiguous_without_retry(self):
+        server = self.with_server(command_reply="OK pressed PLUS ms=99")
+        with self.assertRaises(remote.AmbiguousInputError):
+            remote.press_button("127.0.0.1", "pair", "PLUS", 100, port=server.port)
+        self.assertEqual(server.commands, ["press PLUS 100"])
+
+    def test_input_error_receipt_is_reported_as_rejection(self):
+        server = self.with_server(command_reply="ERR input rc=0x1234")
+        with self.assertRaisesRegex(remote.RemoteError, "input rc=0x1234"):
+            remote.press_button("127.0.0.1", "pair", "A", 100, port=server.port)
+        self.assertEqual(server.commands, ["press A 100"])
+
     def test_wait_returns_immediately_when_newer_request_supersedes(self):
         server = self.with_server(command_reply="OK status id=8 state=queued rc=0x00000000")
         started = time.monotonic()

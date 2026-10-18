@@ -1,6 +1,7 @@
 #include "remote_nro_protocol.hpp"
 
 #include <algorithm>
+#include <charconv>
 
 namespace switchu::daemon::remote {
 namespace {
@@ -44,6 +45,27 @@ Command parseCommand(std::string_view line) {
     }
     if (equalAsciiCaseInsensitive(line, "status"))
         return {CommandKind::Status, {}};
+    constexpr std::string_view pressPrefix = "press ";
+    if (line.substr(0, pressPrefix.size()) == pressPrefix) {
+        const auto args = line.substr(pressPrefix.size());
+        const auto space = args.find(' ');
+        if (space == std::string_view::npos)
+            return {};
+        const auto key = args.substr(0, space);
+        const auto duration = args.substr(space + 1);
+        std::uint32_t ms = 0;
+        const auto parsed = std::from_chars(duration.data(), duration.data() + duration.size(), ms);
+        if (parsed.ec != std::errc{} || parsed.ptr != duration.data() + duration.size()
+            || ms == 0 || ms > 1000)
+            return {};
+        constexpr const char* keys[] = {"A", "B", "X", "Y", "LSTICK", "RSTICK",
+            "L", "R", "ZL", "ZR", "PLUS", "MINUS", "LEFT", "UP", "RIGHT", "DOWN"};
+        for (unsigned i = 0; i < 16; ++i) {
+            if (key == keys[i])
+                return {CommandKind::Press, std::string(key), ms, 1ULL << i};
+        }
+        return {};
+    }
     if (line.size() > launchPrefix.size()
         && equalAsciiCaseInsensitive(line.substr(0, launchPrefix.size()), launchPrefix)) {
         std::string path;

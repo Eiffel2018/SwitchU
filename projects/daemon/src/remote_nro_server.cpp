@@ -1,6 +1,7 @@
 #include "remote_nro_server.hpp"
 
 #include "remote_nro_protocol.hpp"
+#include "remote_nro_input.hpp"
 #include <switch.h>
 #include <switchu/file_log.hpp>
 
@@ -350,6 +351,19 @@ const char* serveClient(int fd) {
         } else if (command.kind == CommandKind::Launch) {
             if (!queueLaunch(fd, command.argument))
                 return "launch-response-failed";
+        } else if (command.kind == CommandKind::Press) {
+            // Runs on the dedicated server worker, independent of the NRO.
+            // The bounded call releases our own virtual controller before replying.
+            const Result rc = switchu::remote_input::pressButton(
+                static_cast<HidNpadButton>(command.buttonMask), command.holdMs);
+            char response[96];
+            const int count = R_SUCCEEDED(rc)
+                ? std::snprintf(response, sizeof(response), "OK pressed %s ms=%u\n",
+                                command.argument.c_str(), command.holdMs)
+                : std::snprintf(response, sizeof(response), "ERR input rc=0x%08X\n", rc);
+            diagnostic(R_SUCCEEDED(rc) ? "input-released" : "input-failed", fd, 0, rc);
+            if (count <= 0 || !sendAll(fd, std::string_view(response, count), "input-response"))
+                return "input-response-failed";
         } else if (command.kind == CommandKind::InvalidPath) {
             answerError(fd, "invalid-path");
         } else {
@@ -451,6 +465,9 @@ void serverThread(void*) {
         }
         closeSocket(listener);
     }
+    const Result inputCleanup = switchu::remote_input::shutdown();
+    if (R_FAILED(inputCleanup))
+        diagnostic("input-cleanup-failed", -1, 0, inputCleanup);
     if (socketReady)
         socketExit();
     switchu::FileLog::log("[remote-nro] listener stopped");

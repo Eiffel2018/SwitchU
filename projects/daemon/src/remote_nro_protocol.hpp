@@ -16,11 +16,14 @@ enum class CommandKind {
     Auth,
     Status,
     Launch,
+    Press,
 };
 
 struct Command {
     CommandKind kind = CommandKind::Invalid;
     std::string argument;
+    std::uint32_t holdMs = 0;
+    std::uint64_t buttonMask = 0;
 };
 
 // Parses one protocol line (without its terminating CR/LF). Launch paths keep
