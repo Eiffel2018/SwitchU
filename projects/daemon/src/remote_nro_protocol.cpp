@@ -46,6 +46,10 @@ Command parseCommand(std::string_view line) {
     }
     if (equalAsciiCaseInsensitive(line, "status"))
         return {CommandKind::Status, {}};
+    for (const char* action : {"on", "off", "status"}) {
+        if (line == std::string("controller ") + action)
+            return {CommandKind::Controller, action};
+    }
     constexpr std::string_view stickPrefix = "stick ";
     if (line.substr(0, stickPrefix.size()) == stickPrefix) {
         auto args = line.substr(stickPrefix.size());

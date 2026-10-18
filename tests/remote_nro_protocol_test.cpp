@@ -6,6 +6,10 @@
 using namespace switchu::daemon::remote;
 
 int main() {
+    assert(parseCommand("controller off").kind == CommandKind::Controller);
+    assert(parseCommand("controller on").argument == "on");
+    assert(parseCommand("controller status").argument == "status");
+    assert(parseCommand("controller release-all").kind == CommandKind::Invalid);
     {
         const auto key = parseCommand("press PLUS 100");
         assert(key.kind == CommandKind::Press && key.argument == "PLUS");

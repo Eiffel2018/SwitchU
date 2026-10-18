@@ -4,8 +4,9 @@
 
 namespace switchu::remote_input {
 
-// Lazily creates a virtual controller owned by this module, then performs one
-// bounded press. The returned libnx Result is the first failure, or 0.
+// Creates a temporary virtual controller for one bounded input pulse and
+// tears down all owned HDLS resources before returning. The returned libnx
+// Result is the first failure, or 0.
 // Accepts ordinary game/UI, HOME/Capture, and the four Joy-Con rail buttons.
 Result pressButton(u64 button, u32 holdMs);
 

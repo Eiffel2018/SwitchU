@@ -17,8 +17,10 @@ static_assert(HidNpadButton_LeftSL == (1ULL << 24) && HidNpadButton_RightSR == (
 
 std::mutex g_mutex;
 bool g_initialized = false;
+bool g_hiddbgReady = false;
 bool g_workBufferAttached = false;
 bool g_deviceAttached = false;
+bool g_stateMayBeActive = false;
 HiddbgHdlsSessionId g_session{};
 HiddbgHdlsHandle g_handle{};
 void* g_workBuffer = nullptr;
@@ -45,6 +47,49 @@ HiddbgHdlsState makeState(u64 buttons) {
     return state;
 }
 
+// Caller holds g_mutex. Always tear down every resource we acquired, even if
+// neutralization or detaching our own virtual device fails.
+Result cleanupOwnedControllerLocked(Result firstResult) {
+    if (g_deviceAttached && g_stateMayBeActive) {
+        const HiddbgHdlsState neutral = makeState(0);
+        const Result neutralResult = hiddbgSetHdlsState(g_handle, &neutral);
+        if (R_SUCCEEDED(firstResult) && R_FAILED(neutralResult))
+            firstResult = neutralResult;
+        g_stateMayBeActive = false;
+    }
+
+    if (g_deviceAttached) {
+        const Result detachResult = hiddbgDetachHdlsVirtualDevice(g_handle);
+        if (R_SUCCEEDED(firstResult) && R_FAILED(detachResult))
+            firstResult = detachResult;
+        // Continue through work-buffer/service release even when detach fails.
+        g_deviceAttached = false;
+    }
+
+    if (g_workBufferAttached) {
+        const Result releaseResult = hiddbgReleaseHdlsWorkBuffer(g_session);
+        if (R_SUCCEEDED(firstResult) && R_FAILED(releaseResult))
+            firstResult = releaseResult;
+        // libnx closes the transfer-memory handle before returning, including
+        // the service-error path, so only now is the backing allocation freed.
+        std::free(g_workBuffer);
+        g_workBuffer = nullptr;
+        g_workBufferAttached = false;
+    } else if (g_workBuffer) {
+        // Attach failed; libnx closes its transfer-memory handle on that path.
+        std::free(g_workBuffer);
+        g_workBuffer = nullptr;
+    }
+
+    if (g_hiddbgReady) {
+        hiddbgExit();
+        g_hiddbgReady = false;
+    }
+    g_initialized = false;
+    g_stateMayBeActive = false;
+    return firstResult;
+}
+
 Result initializeController() {
     if (g_initialized)
         return 0;
@@ -52,32 +97,21 @@ Result initializeController() {
     Result result = hiddbgInitialize();
     if (R_FAILED(result))
         return result;
+    g_hiddbgReady = true;
 
     g_workBuffer = ::aligned_alloc(kWorkBufferAlignment, kWorkBufferSize);
-    if (!g_workBuffer) {
-        hiddbgExit();
-        return MAKERESULT(Module_Libnx, LibnxError_OutOfMemory);
-    }
+    if (!g_workBuffer)
+        return cleanupOwnedControllerLocked(MAKERESULT(Module_Libnx, LibnxError_OutOfMemory));
 
     result = hiddbgAttachHdlsWorkBuffer(&g_session, g_workBuffer, kWorkBufferSize);
-    if (R_FAILED(result)) {
-        std::free(g_workBuffer);
-        g_workBuffer = nullptr;
-        hiddbgExit();
-        return result;
-    }
+    if (R_FAILED(result))
+        return cleanupOwnedControllerLocked(result);
     g_workBufferAttached = true;
 
     const HiddbgHdlsDeviceInfo info = makeDeviceInfo();
     result = hiddbgAttachHdlsVirtualDevice(&g_handle, &info);
-    if (R_FAILED(result)) {
-        hiddbgReleaseHdlsWorkBuffer(g_session);
-        g_workBufferAttached = false;
-        std::free(g_workBuffer);
-        g_workBuffer = nullptr;
-        hiddbgExit();
-        return result;
-    }
+    if (R_FAILED(result))
+        return cleanupOwnedControllerLocked(result);
 
     g_deviceAttached = true;
     g_initialized = true;
@@ -92,19 +126,18 @@ Result applyStateFor(const HiddbgHdlsState& pressed, u32 holdMs) {
     if (R_FAILED(result))
         return result;
 
+    // Treat a failed update as possibly applied and always clear it before
+    // detaching this transient virtual controller.
+    g_stateMayBeActive = true;
     result = hiddbgSetHdlsState(g_handle, &pressed);
     if (R_SUCCEEDED(result)) {
         svcSleepThread(static_cast<u64>(holdMs) * 1'000'000ULL);
         const HiddbgHdlsState released = makeState(0);
         result = hiddbgSetHdlsState(g_handle, &released);
+        if (R_SUCCEEDED(result))
+            g_stateMayBeActive = false;
     }
-
-    // A failed state update may have been partially applied; clear our state.
-    if (R_FAILED(result)) {
-        const HiddbgHdlsState released = makeState(0);
-        hiddbgSetHdlsState(g_handle, &released);
-    }
-    return result;
+    return cleanupOwnedControllerLocked(result);
 }
 
 } // namespace
@@ -128,41 +161,9 @@ Result moveStick(bool right, s32 x, s32 y, u32 holdMs) {
 
 Result shutdown() {
     std::lock_guard<std::mutex> lock(g_mutex);
-    if (!g_initialized)
+    if (!g_initialized && !g_hiddbgReady && !g_workBufferAttached && !g_deviceAttached && !g_workBuffer)
         return 0;
-
-    Result result = 0;
-    if (g_deviceAttached) {
-        const HiddbgHdlsState released = makeState(0);
-        const Result stateResult = hiddbgSetHdlsState(g_handle, &released);
-        if (R_FAILED(stateResult))
-            result = stateResult;
-        const Result detachResult = hiddbgDetachHdlsVirtualDevice(g_handle);
-        if (R_FAILED(detachResult)) {
-            if (R_SUCCEEDED(result))
-                result = detachResult;
-            return result;
-        }
-        g_deviceAttached = false;
-    }
-
-    if (g_workBufferAttached) {
-        const Result releaseResult = hiddbgReleaseHdlsWorkBuffer(g_session);
-        if (R_FAILED(releaseResult)) {
-            if (R_SUCCEEDED(result))
-                result = releaseResult;
-        }
-        // libnx closes the transfer-memory handle before this call returns,
-        // including its service-error path, so the backing memory is now safe
-        // to free.
-        std::free(g_workBuffer);
-        g_workBuffer = nullptr;
-        g_workBufferAttached = false;
-    }
-
-    hiddbgExit();
-    g_initialized = false;
-    return result;
+    return cleanupOwnedControllerLocked(0);
 }
 
 } // namespace switchu::remote_input

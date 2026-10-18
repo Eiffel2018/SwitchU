@@ -31,6 +31,7 @@ constexpr std::uint32_t kClientIdlePollLimit = 1200; // 60 seconds at 50 ms
 constexpr std::uint32_t kUnauthenticatedIdlePollLimit = 100; // 5 seconds
 constexpr const char* kDiagnosticPath = "sdmc:/logs/SwitchU/remote-nro.log";
 constexpr long kDiagnosticMaxBytes = 128 * 1024;
+std::atomic<bool> g_inputBlocked{false};
 
 struct Settings {
     std::string code;
@@ -348,10 +349,34 @@ const char* serveClient(int fd) {
         }
         if (command.kind == CommandKind::Status) {
             sendStatus(fd);
+        } else if (command.kind == CommandKind::Controller) {
+            Result rc = 0;
+            if (command.argument == "off") {
+                g_inputBlocked.store(true);
+                rc = switchu::remote_input::shutdown();
+                diagnostic("controller-blocked", fd, 0, rc);
+            } else if (command.argument == "on") {
+                g_inputBlocked.store(false);
+                diagnostic("controller-enabled", fd);
+            }
+            if (R_FAILED(rc)) {
+                char response[80];
+                const int count = std::snprintf(response, sizeof(response),
+                    "ERR controller-cleanup rc=0x%08X\n", rc);
+                if (count <= 0 || !sendAll(fd, std::string_view(response, count), "controller-response"))
+                    return "controller-response-failed";
+            } else if (!sendAll(fd, g_inputBlocked.load()
+                ? "OK controller disabled\n" : "OK controller enabled\n", "controller-response")) {
+                return "controller-response-failed";
+            }
         } else if (command.kind == CommandKind::Launch) {
             if (!queueLaunch(fd, command.argument))
                 return "launch-response-failed";
         } else if (command.kind == CommandKind::Press) {
+            if (g_inputBlocked.load()) {
+                answerError(fd, "input-disabled");
+                return "input-blocked";
+            }
             // Runs on the dedicated server worker, independent of the NRO.
             // The bounded call releases our own virtual controller before replying.
             const Result rc = switchu::remote_input::pressButton(
@@ -365,6 +390,10 @@ const char* serveClient(int fd) {
             if (count <= 0 || !sendAll(fd, std::string_view(response, count), "input-response"))
                 return "input-response-failed";
         } else if (command.kind == CommandKind::Stick) {
+            if (g_inputBlocked.load()) {
+                answerError(fd, "input-disabled");
+                return "input-blocked";
+            }
             const Result rc = switchu::remote_input::moveStick(command.argument == "R",
                 command.stickX, command.stickY, command.holdMs);
             char response[112];
@@ -380,6 +409,9 @@ const char* serveClient(int fd) {
         } else {
             answerError(fd, "invalid-command");
         }
+        // One authenticated operation per connection. A client holding its
+        // socket open cannot monopolize the worker and starve emergency OFF.
+        return "request-complete";
     }
     return "server-stopping";
 }
