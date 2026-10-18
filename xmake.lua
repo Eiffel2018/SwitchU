@@ -157,7 +157,7 @@ target("atmosphere-stratosphere")
     if not is_plat("cross") then return end
 
     on_build(function (target)
-        os.execv("make", {"-C", "lib/Atmosphere-libs/libstratosphere", "nx_release"})
+        os.execv("make", {"-C", "lib/Atmosphere-libs/libstratosphere", "-j2", "nx_release"})
     end)
 target_end()
 

@@ -13,6 +13,11 @@ on:
       - reopened
       - synchronize
   workflow_dispatch:
+    inputs:
+      daemon_only:
+        description: Build only the release daemon/install package
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -26,12 +31,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode:
-          - debug
-          - release
-        variant:
-          - homebrew
-          - sysmodule
+        mode: ${{ fromJSON(inputs.daemon_only && '["release"]' || '["debug","release"]') }}
+        variant: ${{ fromJSON(inputs.daemon_only && '["sysmodule"]' || '["homebrew","sysmodule"]') }}
 
     steps:
       - name: Get current date as cache key
