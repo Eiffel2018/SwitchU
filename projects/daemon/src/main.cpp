@@ -9,6 +9,7 @@
 #include <switchu/file_log.hpp>
 #include <switchu/sd_commit.hpp>
 #include "app_manager.hpp"
+#include "breeze_launch_handoff.hpp"
 #include "ecs.hpp"
 #include "library_applet_runner.hpp"
 #include "menu_launcher.hpp"
@@ -263,6 +264,9 @@ static bool g_launchRequestPending = false;
 // Breeze) rather than from the running application. Decided when the request
 // arrives: by the time it is acted on, the application has been stopped.
 static bool g_launchRequestFromApplet = false;
+// Capture before Breeze exits and its session/flag is cleared.
+static bool g_launchRequestFromBreeze = false;
+static daemon::BreezeLaunchHandoff g_breezeLaunchHandoff;
 static AccountUid g_lastLaunchUid{};
 
 // Breeze Home toggle (fork-only): see smi::kBreezeHomeToggleFlag.
@@ -1578,6 +1582,7 @@ static void requestPowerStateChange(const char* source, bool reboot) {
 }
 
 static void startPowerSequence(const char* source, smi::SystemMessage action) {
+    g_breezeLaunchHandoff.cancel();
     cancelViewPolling(source);
     takeForegroundFromRunningApp(source);
 
@@ -1619,6 +1624,7 @@ static void startPowerSequence(const char* source, smi::SystemMessage action) {
 }
 
 static void openMenuFromHome(const char* source) {
+    g_breezeLaunchHandoff.cancel();
     const uint64_t homeStartedAt = armGetSystemTick();
     logHomeState(source, "request");
     cancelViewPolling("home");
@@ -1766,6 +1772,11 @@ static void handleGeneralChannel() {
 }
 
 static void onLaunchRequested() {
+    g_breezeLaunchHandoff.cancel();
+    g_launchRequestFromBreeze = daemon::isBreezeStartRequest(
+        g_foregroundAppletActive, g_breezeCandidate,
+        g_breezeSession || breezeFlagExists(smi::kBreezeRunningFlag),
+        daemon::app::isRunning());
     switchu::FileLog::log(
         "[ae] -> LaunchApplicationRequested appRunning=%d hasFG=%d menu=%d fgApplet=%d breeze=%d held=%d",
         daemon::app::isRunning() ? 1 : 0, daemon::app::hasForeground() ? 1 : 0,
@@ -1869,6 +1880,22 @@ static Result chooseRequestedLaunchUser(uint64_t titleId, AccountUid* outUid) {
     *outUid = AccountUid{};
     if (account == 0)
         return 0;
+    if (g_launchRequestFromBreeze) {
+        // PC Connect cannot answer a playerSelect applet after Breeze closes.
+        // Use the first system-listed user, not the last/default user. Failure
+        // stays a failure instead of silently opening a console-only dialog.
+        AccountUid users[ACC_USER_LIST_SIZE]{};
+        s32 count = 0;
+        const Result rc = accountListAllUsers(users, ACC_USER_LIST_SIZE, &count);
+        if (R_FAILED(rc))
+            return rc;
+        if (count <= 0 || !accountUidIsValid(&users[0]))
+            return MAKERESULT(Module_Libnx, LibnxError_NotFound);
+        *outUid = users[0];
+        g_lastLaunchUid = *outUid;
+        switchu::FileLog::log("[launch-request] Breeze PC start: first user selected");
+        return 0;
+    }
     if (account != 2 && option != 0) {
         *outUid = resolveUser(AccountUid{});
         return 0;
@@ -1920,8 +1947,15 @@ static Result chooseRequestedLaunchUser(uint64_t titleId, AccountUid* outUid) {
 static Result launchRequestedApplication() {
     const Result rc = daemon::app::launchRequested(chooseRequestedLaunchUser,
                                                   g_launchRequestFromApplet);
-    if (R_SUCCEEDED(rc))
+    if (R_SUCCEEDED(rc)) {
         noteApplicationLaunched();
+        if (g_launchRequestFromBreeze) {
+            g_breezeLaunchHandoff.schedule(daemon::app::snapshot().sessionId,
+                                            armTicksToNs(armGetSystemTick()));
+            switchu::FileLog::log("[launch-request] Breeze return scheduled in 2s");
+        }
+    }
+    g_launchRequestFromBreeze = false;
     switchu::FileLog::log("[launch-request] rc=0x%X title=0x%016lX", rc,
                           daemon::app::suspendedTitleId());
     return rc;
@@ -1934,6 +1968,35 @@ static bool consumeLaunchRequest() {
 
     if (R_FAILED(launchRequestedApplication()) && !daemon::app::isRunning())
         openHome(smi::MenuStartMode::MainMenu, "launch-request");
+    return true;
+}
+
+static bool restoreBreezeAfterLaunch() {
+    if (!g_breezeLaunchHandoff.pending())
+        return false;
+    // An explicit HOME/menu/action, a replacement launch or an exited game
+    // takes priority. Never reopen Breeze against a later application session.
+    if (!daemon::app::isRunning() || g_launchRequestPending ||
+        daemon::menu_la::hasHolder() || g_foregroundAppletActive ||
+        !g_actionQueue.empty() || !breezeCanStart()) {
+        g_breezeLaunchHandoff.cancel();
+        return false;
+    }
+    if (!g_breezeLaunchHandoff.due(daemon::app::snapshot().sessionId,
+                                  armTicksToNs(armGetSystemTick())))
+        return false;
+
+    // Don't interrupt an applet the game opens at startup. Wait, bounded by
+    // the handoff timeout, while still servicing HOME, sleep and application exit.
+    bool appletsLeft = false;
+    if (R_FAILED(daemon::app::areLibraryAppletsLeft(&appletsLeft)) || appletsLeft)
+        return false;
+    g_breezeLaunchHandoff.cancel(); // one attempt, including foreground/queue failure
+    if (!takeForegroundFromRunningApp("breeze-pc-start"))
+        return false;
+    const Result rc = queueBreeze(g_lastLaunchUid, "breeze-pc-start");
+    if (R_FAILED(rc))
+        daemon::app::resume();
     return true;
 }
 
@@ -2009,6 +2072,17 @@ static void handleAppletMessages() {
 static void pumpForegroundAppletMessages() {
     handleGeneralChannel();
     handleAppletMessages();
+}
+
+static void drainBreezeLaunchMessages() {
+    // Breeze may exit between two runner polls. AM has already queued msg 50
+    // when the holder joins; consume it before clearing the caller's identity.
+    Event* event = appletGetMessageEvent();
+    for (unsigned count = 0; event && count < 32; ++count) {
+        if (R_FAILED(eventWait(event, 0)))
+            break;
+        handleAppletMessages();
+    }
 }
 
 static constexpr uint64_t kBreezePollIntervalNs = 250'000'000ULL;
@@ -2101,6 +2175,8 @@ static Result launchLibraryApplet(AppletId id, const char* name,
         request,
         breezeCandidate ? pumpBreezeAppletMessages : pumpForegroundAppletMessages,
         consumeForegroundAppletHomeRequest);
+    if (breezeCandidate)
+        drainBreezeLaunchMessages();
     g_foregroundAppletActive = false;
     return rc;
 }
@@ -2264,6 +2340,7 @@ static Result launchUserProfile(AccountUid uid) {
     const Result rc = daemon::runLibraryApplet(
         request, pumpBreezeAppletMessages,
         consumeForegroundAppletHomeRequest);
+    drainBreezeLaunchMessages();
     g_foregroundAppletActive = false;
     return rc;
 }
@@ -2858,6 +2935,8 @@ static void mainLoop() {
         didWork = true;
     }
 
+    didWork |= restoreBreezeAfterLaunch();
+
     if (!didWork && g_menuRelaunchCooldown <= 0 && g_actionQueue.empty() &&
         !g_launchRequestPending && !daemon::app::isRunning() && !daemon::menu_la::hasHolder() &&
         !g_foregroundAppletActive) {
@@ -2870,13 +2949,15 @@ static bool mainLoopNeedsFastTick() {
     if (g_powerSequenceStarted.load())
         return false;
     if (shouldDeferViewPolling()) {
-        return g_menuRelaunchCooldown > 0 || !g_actionQueue.empty();
+        return g_menuRelaunchCooldown > 0 || !g_actionQueue.empty() ||
+               g_breezeLaunchHandoff.pending();
     }
     return g_eventPollsRemaining > 0
         || g_appCatalogRefreshPending.load()
         || g_controlCacheRefreshPending.load()
         || g_menuRelaunchCooldown > 0
         || g_launchRequestPending
+        || g_breezeLaunchHandoff.pending()
         || !g_actionQueue.empty();
 }
 

@@ -26,6 +26,26 @@
 - [License](#license)
 
 
+## Starting a game from Breeze PC Connect
+
+With Breeze's HOME toggle enabled (No restart, Fast restart or Overlay), a
+`gamestart` request from the identified Breeze applet selects the first user
+returned by the system account list. Other launchers retain their user picker.
+Games that do not use accounts are launched without a preselected user.
+
+After a successful launch, the daemon waits two seconds and reopens Breeze
+through its existing User Page or Album loader, allowing PC Connect to reconnect
+without pressing HOME. The delay does not block HOME, sleep or game-exit events.
+An explicit HOME action, a new launch or a changed application session cancels
+the automatic return. Startup applets defer the return for up to 15 seconds.
+
+AM does not identify the TCP client: this policy applies to launch requests
+from the identified Breeze applet, the path used by BreezePC's Start game.
+It requires the normal Breeze NRO and loader installation; it does not install
+or enable PC Connect. Both `SwitchU.zip` and `home_daemon.zip` use this daemon.
+
+Host policy check: `g++ -std=c++17 tests/breeze_launch_handoff_test.cpp -o /tmp/breeze-launch-handoff-test && /tmp/breeze-launch-handoff-test`.
+
 ## Screenshots
 
 ![](./screenshots/1.jpg)

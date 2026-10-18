@@ -54,6 +54,13 @@ jobs:
             apt-get -y install curl gcc g++ zip unzip zstd
           fi
 
+      - name: Test Breeze launch handoff policy
+        if: matrix.variant == 'sysmodule' && matrix.mode == 'release'
+        shell: bash
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror tests/breeze_launch_handoff_test.cpp -o /tmp/breeze-launch-handoff-test
+          /tmp/breeze-launch-handoff-test
+
       # Atmosphere-libs 1.12.0 (lib/Atmosphere-libs) needs libnx newer than the
       # container's 4.12.0 release (pgl shell events and more). Build the same
       # switchbrew commit the local builds use.
