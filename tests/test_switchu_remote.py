@@ -137,9 +137,39 @@ class SwitchURemoteTests(unittest.TestCase):
         self.assertEqual(reply, "OK pressed PLUS ms=100")
         self.assertEqual(server.commands, ["press PLUS 100"])
 
+    def test_home_button_sends_one_bounded_press(self):
+        server = self.with_server(command_reply="OK pressed HOME ms=100")
+        reply = remote.press_button("127.0.0.1", "pair", "HOME", 100, port=server.port)
+        self.assertEqual(reply, "OK pressed HOME ms=100")
+        self.assertEqual(server.commands, ["press HOME 100"])
+
+    def test_capture_and_joycon_rail_buttons_use_single_press_commands(self):
+        for key in ("CAPTURE", "LSL", "LSR", "RSL", "RSR"):
+            with self.subTest(key=key):
+                server = self.with_server(command_reply="OK pressed %s ms=100" % key)
+                reply = remote.press_button("127.0.0.1", "pair", key, 100, port=server.port)
+                self.assertEqual(reply, "OK pressed %s ms=100" % key)
+                self.assertEqual(server.commands, ["press %s 100" % key])
+
+    def test_stick_sends_one_bounded_axis_pulse(self):
+        server = self.with_server(command_reply="OK stick R x=-32768 y=32767 ms=100")
+        reply = remote.stick("127.0.0.1", "pair", "R", -32768, 32767, 100, port=server.port)
+        self.assertEqual(reply, "OK stick R x=-32768 y=32767 ms=100")
+        self.assertEqual(server.commands, ["stick R -32768 32767 100"])
+
+    def test_invalid_stick_side_axes_or_duration_is_rejected_before_network(self):
+        server = self.with_server()
+        for side, x, y, duration in (("X", 0, 0, 100), ("L", -32769, 0, 100),
+                                     ("R", 0, 32768, 100), ("L", True, 0, 100),
+                                     ("R", 0, 0, False), ("L", 0.5, 0, 100),
+                                     ("R", 0, 0, 1001)):
+            with self.subTest(side=side, x=x, y=y, duration=duration), self.assertRaises(ValueError):
+                remote.stick("127.0.0.1", "pair", side, x, y, duration, port=server.port)
+        self.assertEqual(server.commands, [])
+
     def test_invalid_input_button_or_duration_is_rejected_before_network(self):
         server = self.with_server()
-        for button, duration in (("HOME", 100), ("plus", 100), ("A\nstatus", 100),
+        for button, duration in (("plus", 100), ("A\nstatus", 100),
                                  ("A", 0), ("A", 1001), ("A", True), ("A", "100")):
             with self.subTest(button=button, duration=duration), self.assertRaises(ValueError):
                 remote.press_button("127.0.0.1", "pair", button, duration, port=server.port)
@@ -151,6 +181,13 @@ class SwitchURemoteTests(unittest.TestCase):
             remote.press_button("127.0.0.1", "pair", "PLUS", 100,
                                 port=server.port, timeout=0.5)
         self.assertEqual(server.commands, ["press PLUS 100"])
+
+    def test_ambiguous_stick_pulse_is_not_retried(self):
+        server = self.with_server(close_after_command=True)
+        with self.assertRaises(remote.AmbiguousInputError):
+            remote.stick("127.0.0.1", "pair", "L", 0, 32767, 100,
+                         port=server.port, timeout=0.5)
+        self.assertEqual(server.commands, ["stick L 0 32767 100"])
 
     def test_invalid_input_success_receipt_is_ambiguous_without_retry(self):
         server = self.with_server(command_reply="OK pressed PLUS ms=99")

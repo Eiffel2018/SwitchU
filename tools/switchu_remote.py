@@ -37,7 +37,8 @@ class AmbiguousInputError(RemoteError):
 
 INPUT_BUTTONS = frozenset((
     "A", "B", "X", "Y", "L", "R", "ZL", "ZR", "PLUS", "MINUS",
-    "LSTICK", "RSTICK", "UP", "DOWN", "LEFT", "RIGHT",
+    "LSTICK", "RSTICK", "UP", "DOWN", "LEFT", "RIGHT", "HOME", "CAPTURE",
+    "LSL", "LSR", "RSL", "RSR",
 ))
 
 
@@ -48,6 +49,19 @@ def validate_input(button: str, duration_ms: int) -> tuple[str, int]:
             or not 1 <= duration_ms <= 1000):
         raise ValueError("button duration must be between 1 and 1000 ms")
     return button, duration_ms
+
+
+def validate_stick(side: str, x: int, y: int, duration_ms: int) -> tuple[str, int, int, int]:
+    if side not in ("L", "R"):
+        raise ValueError("stick side must be L or R")
+    values = (x, y, duration_ms)
+    if any(isinstance(value, bool) or not isinstance(value, int) for value in values):
+        raise ValueError("stick axes and duration must be integers")
+    if not -32768 <= x <= 32767 or not -32768 <= y <= 32767:
+        raise ValueError("stick axes must be between -32768 and 32767")
+    if not 1 <= duration_ms <= 1000:
+        raise ValueError("stick duration must be between 1 and 1000 ms")
+    return side, x, y, duration_ms
 
 
 def validate_sd_path(path: str) -> str:
@@ -93,10 +107,11 @@ def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
     """Send one authenticated command. Launches and inputs are never replayed."""
     if not code or "\n" in code or "\r" in code:
         raise ValueError("PC connect code is empty or invalid")
-    if command != "status" and not command.startswith(("launch ", "press ")):
+    if command != "status" and not command.startswith(("launch ", "press ", "stick ")):
         raise ValueError("unsupported SwitchU command")
     path = None
     input_press = None
+    input_stick = None
     if command.startswith("launch "):
         path = validate_sd_path(command[len("launch "):])
         command = "launch " + path
@@ -106,6 +121,13 @@ def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
             raise ValueError("press requires a button and duration")
         input_press = validate_input(fields[1], int(fields[2]) if fields[2].isdigit() else fields[2])
         command = "press %s %d" % input_press
+    elif command.startswith("stick "):
+        fields = command.split()
+        if len(fields) != 5:
+            raise ValueError("stick requires a side, x, y, and duration")
+        parsed = [int(value) if re.fullmatch(r"-?\d+", value) else value for value in fields[2:]]
+        input_stick = validate_stick(fields[1], *parsed)
+        command = "stick %s %d %d %d" % input_stick
 
     sent_launch = False
     sent_input = False
@@ -122,7 +144,7 @@ def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
                     raise RemoteError(auth[4:])
                 raise RemoteError("SwitchU authentication failed")
             sent_launch = path is not None
-            sent_input = input_press is not None
+            sent_input = input_press is not None or input_stick is not None
             sock.sendall((command + "\n").encode("utf-8"))
             reply = _read_line(sock)
     except (OSError, ConnectionError, TimeoutError) as exc:
@@ -145,9 +167,10 @@ def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
     if reply.startswith("ERR "):
         raise RemoteError(reply[4:])
     expected = ("OK pressed %s ms=%d" % input_press if input_press is not None
+                else "OK stick %s x=%d y=%d ms=%d" % input_stick if input_stick is not None
                 else "OK status " if path is None else "OK queued ")
     if not reply.startswith(expected):
-        if input_press is not None:
+        if sent_input:
             raise AmbiguousInputError(
                 "SwitchU returned no valid button receipt; the press may have been accepted"
             )
@@ -156,7 +179,7 @@ def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
                 "launch was sent but SwitchU returned no valid receipt; check status before retrying"
             )
         raise RemoteError("unexpected SwitchU status reply")
-    if input_press is not None and reply != expected:
+    if sent_input and reply != expected:
         raise AmbiguousInputError(
             "SwitchU returned no valid button receipt; the press may have been accepted"
         )
@@ -178,6 +201,13 @@ def press_button(host: str, code: str, button: str, duration_ms: int = 100, *,
                  port: int = DEFAULT_PORT, timeout: float = 3.0) -> str:
     button, duration_ms = validate_input(button, duration_ms)
     return request(host, code, "press %s %d" % (button, duration_ms),
+                   port=port, timeout=timeout)
+
+
+def stick(host: str, code: str, side: str, x: int, y: int, duration_ms: int = 100, *,
+          port: int = DEFAULT_PORT, timeout: float = 3.0) -> str:
+    side, x, y, duration_ms = validate_stick(side, x, y, duration_ms)
+    return request(host, code, "stick %s %d %d %d" % (side, x, y, duration_ms),
                    port=port, timeout=timeout)
 
 

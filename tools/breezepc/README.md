@@ -33,6 +33,15 @@ use authenticated TCP 6802 even when Breeze is closed. The daemon update must
 be installed and the Switch rebooted first. Game TID start/stop and the
 existing Breeze UI/file functions still use Breeze TCP 6801.
 
-This is the same NRO/input protocol tested with daemon `d810bfa`. A loader
+The Joy-Con-style controller includes HOME, separate D-pad and left/right
+analog pads, L3/R3 stick clicks, and Capture: 26 operations in total,
+including the eight stick directions and two center clicks. Rail and SYNC
+are outside this main controller layout.
+Each outer-pad click sends a bounded
+100 ms analog impulse; positive Y is up and the daemon centers the axes.
+HOME, Capture, rail and analog input need the updated daemon (transport log marker v3);
+the first d810bfa daemon supports only the original buttons.
+
+The original NRO/button protocol was tested with daemon `d810bfa`. A loader
 `started` response is not an NRO-readiness check; uncertain input is never
 automatically replayed. No sys-botbase module is required.

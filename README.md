@@ -68,8 +68,20 @@ and a **SwitchU controller** window. The controller uses the same authenticated
 sends one 100 ms button press and releases it. Accepted input does not prove
 that an NRO received it (controller assignment and NRO support still apply).
 The wire command is `press PLUS 100`, with standard buttons A/B/X/Y,
-L/R/ZL/ZR, PLUS/MINUS, LSTICK/RSTICK and UP/DOWN/LEFT/RIGHT. Holds are bounded
-to 1–1000 ms; the client never replays an uncertain input reply.
+L/R/ZL/ZR, PLUS/MINUS, LSTICK/RSTICK (L3/R3), HOME/CAPTURE,
+LSL/LSR/RSL/RSR (rail buttons), and UP/DOWN/LEFT/RIGHT.
+`stick R 0 32767 100` moves the right stick up; use `L` for the left stick.
+Axes range from -32768 to 32767, with positive Y up. Holds are bounded to
+1–1000 ms and axes return to center before replying; the client never replays
+an uncertain input reply. The Joy-Con-style controller separates the D-pad,
+left/right sticks and stick clicks. Each stick click outside the center sends
+one 100 ms impulse, rather than an indefinitely held axis. HOME and analog
+axes, Capture and rail inputs require the updated daemon; the initial d810bfa
+daemon does not support them. The two physical SYNC pairing buttons are not
+game inputs. The main UI excludes rail/SYNC and provides 26 operations:
+24 buttons/directions plus the L3/R3 center clicks. Optional rail protocol
+input delivery depends on the virtual controller/style supported by the
+target and is not hardware-verified.
 The [complete patched BreezePC sources and packaging instructions](tools/breezepc/README.md)
 are included. `python tools/package_breezepc.py dist/breezepc` creates a complete
 `BreezePC.zip` and an overwrite-only `BreezePC-update.zip`; the **BreezePC package**

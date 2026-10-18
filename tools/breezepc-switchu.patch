@@ -1,8 +1,7 @@
 diff --git a/pcconnect_app.py b/pcconnect_app.py
-index ffc77da..0781b6a 100644
 --- a/pcconnect_app.py
 +++ b/pcconnect_app.py
-@@ -110,6 +110,7 @@ from pcconnect_files import FileManager, pc_folder_name  # noqa: E402
+@@ -110,6 +110,7 @@
  from pcconnect_album import Album  # noqa: E402
  from pcconnect_text import TextView, plain  # noqa: E402
  from pc_game_history import clean as clean_game_history, remember as remember_game, valid_tid  # noqa: E402
@@ -10,7 +9,7 @@ index ffc77da..0781b6a 100644
  
  CONFIG = os.path.join(os.path.expanduser("~"), ".breeze_pc.json")
  SCREEN_W, SCREEN_H = 1280, 720
-@@ -523,6 +524,8 @@ class App:
+@@ -523,6 +524,8 @@
          self.view_w, self.view_h = 960, 540
          self.frames, self.fps_t0 = 0, time.time()
          self.last_reply = ""
@@ -19,7 +18,7 @@ index ffc77da..0781b6a 100644
  
          self.canvas = tk.Canvas(root, width=self.view_w, height=self.view_h, bg="black", highlightthickness=0)
          self.canvas.pack(fill="both", expand=True)
-@@ -534,6 +537,16 @@ class App:
+@@ -534,6 +537,16 @@
          tk.Button(bar, text="Hide", command=lambda: self.link.send("hide")).pack(side="left")
          tk.Button(bar, text="Reset", command=self.reset).pack(side="left")
          tk.Button(bar, text="Connect...", command=self.on_connect).pack(side="left")
@@ -36,7 +35,7 @@ index ffc77da..0781b6a 100644
          tk.Label(bar, text=" Keys:").pack(side="left")
          self.chord = tk.Entry(bar, width=14)
          self.chord.pack(side="left")
-@@ -801,6 +814,7 @@ class App:
+@@ -801,6 +814,7 @@
          return self.text is not None and self.text.alive()
  
      def on_close(self):
@@ -44,10 +43,11 @@ index ffc77da..0781b6a 100644
          self.stop_record()
          if self.text_open():
              self.text.close()
-@@ -849,6 +863,156 @@ class App:
+@@ -848,6 +862,258 @@
+                                "Whatever Breeze is doing is dropped. The game and its cheats are not touched."):
              self.link.send("restart now")
              self.status.config(text="restarting Breeze...")
- 
++
 +    def open_switchu_breeze(self):
 +        self.send_switchu_launch(switchu_remote.DEFAULT_BREEZE)
 +
@@ -76,25 +76,102 @@ index ffc77da..0781b6a 100644
 +        win = tk.Toplevel(self.root)
 +        win.title("SwitchU Controller")
 +        win.resizable(False, False)
++        win.geometry("800x710")
 +        self.switchu_controller = win
 +        self.switchu_input_buttons = []
-+        keys = ("A", "B", "X", "Y", "L", "R", "ZL", "ZR", "PLUS", "MINUS",
-+                "LSTICK", "RSTICK", "UP", "DOWN", "LEFT", "RIGHT")
-+        for index, key in enumerate(keys):
-+            button = tk.Button(win, text=key, width=9,
-+                               command=lambda name=key: self.send_switchu_button(name))
-+            button.grid(row=index // 4, column=index % 4, padx=3, pady=3, sticky="nsew")
-+            self.switchu_input_buttons.append(button)
-+        tk.Label(win, text="Each click sends one 100 ms press. Acceptance does not confirm the NRO responded.",
-+                 wraplength=340, justify="left").grid(row=4, column=0, columnspan=4, padx=6, pady=5)
++        self.switchu_input_canvases = []
++        canvas = tk.Canvas(win, width=780, height=670, bg="#f5f7fa", highlightthickness=0)
++        canvas.pack(padx=10, pady=8)
++        self.switchu_controller_canvas = canvas
++        # Tall, colored Joy-Con silhouettes keep each side's controls in the familiar layout.
++        canvas.create_polygon(110, 30, 270, 30, 320, 58, 340, 112, 334, 540,
++                              310, 615, 270, 640, 100, 640, 60, 615, 40, 560,
++                              40, 115, 60, 60, fill="#20c5cf", outline="#138b96",
++                              width=3, smooth=True, splinesteps=28, tags=("left-body",))
++        canvas.create_polygon(510, 30, 670, 30, 720, 60, 740, 115, 740, 560,
++                              720, 615, 680, 640, 510, 640, 470, 615, 446, 540,
++                              440, 112, 460, 58, fill="#ff665e", outline="#c63f3a",
++                              width=3, smooth=True, splinesteps=28, tags=("right-body",))
++        canvas.create_text(190, 150, text="LEFT JOY-CON", fill="#17434a",
++                           font=("Segoe UI", 10, "bold"))
++        canvas.create_text(595, 150, text="RIGHT JOY-CON", fill="#5b2927",
++                           font=("Segoe UI", 10, "bold"))
++
++        # Shoulder and trigger rows follow the front of a pair of Joy-Con.
++        self._place_switchu_button(canvas, "L", "L", 88, 72, 58)
++        self._place_switchu_button(canvas, "R", "R", 692, 72, 58)
++        self._place_switchu_button(canvas, "ZL", "ZL", 275, 112, 58)
++        self._place_switchu_button(canvas, "ZR", "ZR", 505, 112, 58)
++        self._place_switchu_button(canvas, "MINUS", "MINUS", 308, 178, 68)
++        self._place_switchu_button(canvas, "PLUS", "PLUS", 472, 178, 68)
++
++        self._place_switchu_stick_pad(canvas, "L", 180, 280)
++        dpad = tk.Frame(canvas, bd=0, bg="#20c5cf")
++        self._add_switchu_button(dpad, "UP", "UP").grid(row=0, column=1, padx=2, pady=2)
++        self._add_switchu_button(dpad, "LEFT", "LEFT").grid(row=1, column=0, padx=2, pady=2)
++        self._add_switchu_button(dpad, "DOWN", "DOWN").grid(row=2, column=1, padx=2, pady=2)
++        self._add_switchu_button(dpad, "RIGHT", "RIGHT").grid(row=1, column=2, padx=2, pady=2)
++        canvas.create_window(180, 458, window=dpad)
++        self._place_switchu_button(canvas, "CAPTURE", "CAPTURE", 95, 588, 96)
++
++        face = tk.Frame(canvas, bd=0, bg="#ff665e")
++        self._add_switchu_button(face, "X", "X").grid(row=0, column=1, padx=2, pady=2)
++        self._add_switchu_button(face, "Y", "Y").grid(row=1, column=0, padx=2, pady=2)
++        self._add_switchu_button(face, "A", "A").grid(row=1, column=2, padx=2, pady=2)
++        self._add_switchu_button(face, "B", "B").grid(row=2, column=1, padx=2, pady=2)
++        canvas.create_window(595, 280, window=face)
++        self._place_switchu_stick_pad(canvas, "R", 595, 458)
++        self._place_switchu_button(canvas, "HOME", "HOME", 685, 588, 74)
++        canvas.create_text(390, 657, text="100 ms taps  ·  sticks auto-center  ·  center = L3 / R3",
++                          fill="#344252", font=("Segoe UI", 10))
 +        win.protocol("WM_DELETE_WINDOW", self.close_switchu_controller)
 +        self._set_switchu_buttons()
++
++    def _add_switchu_button(self, parent, label, key):
++        button = tk.Button(parent, text=label, width=5,
++                           command=lambda name=key: self.send_switchu_button(name))
++        self.switchu_input_buttons.append(button)
++        return button
++
++    def _place_switchu_button(self, canvas, label, key, x, y, width=58):
++        button = self._add_switchu_button(canvas, label, key)
++        canvas.create_window(x, y, window=button, width=width, height=30)
++        return button
++
++    def _place_switchu_stick_pad(self, parent, side, x, y):
++        color = "#d7f5f6" if side == "L" else "#ffe0dd"
++        pad = tk.Canvas(parent, width=118, height=118, background=color,
++                        highlightthickness=2, highlightbackground="#455568")
++        pad.create_oval(10, 10, 108, 108, outline="#526174", width=2, tags=("pad",))
++        pad.create_line(59, 18, 59, 100, fill="#9aa7b5", tags=("axis",))
++        pad.create_line(18, 59, 100, 59, fill="#9aa7b5", tags=("axis",))
++        for px, py, arrow in ((59, 23, "↑"), (95, 59, "→"),
++                              (59, 95, "↓"), (23, 59, "←")):
++            pad.create_text(px, py, text=arrow, fill="#354454", font=("Segoe UI", 9), tags=("direction",))
++        pad.create_oval(42, 42, 76, 76, fill="#c8d0da", outline="#526174", tags=("center",))
++        pad.create_text(59, 59, text=side + "3", fill="#1e2936", tags=("center-label",))
++        parent.create_window(x, y, window=pad)
++
++        def click(event):
++            dx, dy = event.x - 59, 59 - event.y
++            radius = max(1, min(47, int((dx * dx + dy * dy) ** 0.5)))
++            if radius <= 13:
++                self.send_switchu_button("LSTICK" if side == "L" else "RSTICK")
++                return
++            x = max(-32768, min(32767, round(dx * 32767 / radius)))
++            y = max(-32768, min(32767, round(dy * 32767 / radius)))
++            self.send_switchu_stick(side, x, y)
++
++        pad.bind("<Button-1>", click)
++        self.switchu_input_canvases.append(pad)
++        return pad
 +
 +    def close_switchu_controller(self):
 +        if self.switchu_controller is not None:
 +            self.switchu_controller.destroy()
 +            self.switchu_controller = None
 +            self.switchu_input_buttons = []
++            self.switchu_input_canvases = []
 +
 +    def send_switchu_button(self, button):
 +        if self.switchu_busy:
@@ -108,6 +185,18 @@ index ffc77da..0781b6a 100644
 +        threading.Thread(target=self._switchu_input_worker,
 +                         args=(generation, host, code, button), daemon=True).start()
 +
++    def send_switchu_stick(self, side, x, y):
++        if self.switchu_busy:
++            self.status.config(text="A SwitchU request is pending; no stick pulse was sent.")
++            return
++        self.switchu_busy = True
++        self._set_switchu_buttons()
++        generation = self.switchu_generation
++        host, code = self.cfg["host"], self.cfg["code"]
++        self.status.config(text="Sending one %s stick pulse (x=%d, y=%d, 100 ms)..." % (side, x, y))
++        threading.Thread(target=self._switchu_stick_worker,
++                         args=(generation, host, code, side, x, y), daemon=True).start()
++
 +    def _switchu_input_worker(self, generation, host, code, button):
 +        try:
 +            reply = switchu_remote.press_button(host, code, button, 100, timeout=3.0)
@@ -116,6 +205,17 @@ index ffc77da..0781b6a 100644
 +            message = ("Button result unknown: %s. It was not resent." % exc)
 +        except (switchu_remote.RemoteError, ValueError) as exc:
 +            message = "SwitchU button press failed: %s" % exc
++        self.out.put(("switchu_remote", generation, True, message))
++
++    def _switchu_stick_worker(self, generation, host, code, side, x, y):
++        try:
++            switchu_remote.stick(host, code, side, x, y, 100, timeout=3.0)
++            message = ("SwitchU accepted one %s stick pulse (x=%d, y=%d) for 100 ms; it returns to center automatically." %
++                       (side, x, y))
++        except switchu_remote.AmbiguousInputError as exc:
++            message = ("Stick result unknown: %s. It was not resent." % exc)
++        except (switchu_remote.RemoteError, ValueError) as exc:
++            message = "SwitchU stick pulse failed: %s" % exc
 +        self.out.put(("switchu_remote", generation, True, message))
 +
 +    def check_switchu_status(self):
@@ -148,6 +248,8 @@ index ffc77da..0781b6a 100644
 +        self.switchu_controller_btn.config(state=state)
 +        for button in self.switchu_input_buttons:
 +            button.config(state=state)
++        for canvas in getattr(self, "switchu_input_canvases", ()):
++            canvas.config(state=state)
 +
 +    def _switchu_launch_worker(self, generation, host, code, path):
 +        try:
@@ -197,11 +299,10 @@ index ffc77da..0781b6a 100644
 +        except switchu_remote.RemoteError as exc:
 +            message = "SwitchU status unavailable: %s" % exc
 +        self.out.put(("switchu_remote", generation, True, message))
-+
+ 
      def set_fps(self):
          try:
-             self.link.fps = float(self.fps_var.get())
-@@ -1110,6 +1274,9 @@ class App:
+@@ -1110,6 +1376,9 @@
              self.game_var.set(False)
              self.on_game_input()
          self.cfg.update(host=host, code=code)
@@ -211,7 +312,7 @@ index ffc77da..0781b6a 100644
          self.save_cfg()
          self.root.title("Breeze PC - %s" % host)
          self.state = {}
-@@ -1419,6 +1586,13 @@ class App:
+@@ -1419,6 +1688,13 @@
                          self.last_reply = ""
                  elif item[0] == "status":
                      self.status.config(text=item[1])
