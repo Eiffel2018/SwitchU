@@ -7,6 +7,23 @@ using switchu::daemon::BreezeLaunchHandoff;
 using switchu::daemon::isBreezeStartRequest;
 
 int main() {
+    // The return must not enter an arbitrary User Page override when the
+    // daemon's own complete Breeze loader is installed.
+    using switchu::daemon::useBreezeUserPage;
+    assert(!useBreezeUserPage(true, true, true));
+    assert(!useBreezeUserPage(true, true, false));
+    assert(useBreezeUserPage(true, false, true));
+    assert(!useBreezeUserPage(true, false, false));
+    assert(useBreezeUserPage(false, true, true)); // normal HOME behavior preserved
+    assert(!useBreezeUserPage(false, true, false));
+    // Failures may retry only the still-current requested session. A manual
+    // cancel (target zero), replacement or game exit cannot restart the loop.
+    using switchu::daemon::canRetryBreezeReturn;
+    assert(canRetryBreezeReturn(7, 7, true, false));
+    assert(!canRetryBreezeReturn(0, 7, true, false));
+    assert(!canRetryBreezeReturn(7, 8, true, false));
+    assert(!canRetryBreezeReturn(7, 7, false, false));
+    assert(!canRetryBreezeReturn(7, 7, true, true));
     // A live, identified Breeze applet with no game is the PC start path.
     assert(isBreezeStartRequest(true, true, true, false));
     assert(!isBreezeStartRequest(false, true, true, false));

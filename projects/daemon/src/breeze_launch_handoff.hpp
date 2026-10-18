@@ -13,6 +13,20 @@ constexpr bool isBreezeStartRequest(bool appletActive, bool breezeCandidate,
     return appletActive && breezeCandidate && breezeIdentified && !applicationRunning;
 }
 
+// A User Page override can belong to another homebrew launcher. For an
+// automatic return use the known Breeze loader shipped with this daemon.
+constexpr bool useBreezeUserPage(bool automaticReturn, bool albumLoaderReady,
+                                  bool userPageOverridePresent) {
+    return userPageOverridePresent && !(automaticReturn && albumLoaderReady);
+}
+
+constexpr bool canRetryBreezeReturn(std::uint64_t requestedSession,
+                                    std::uint64_t currentSession,
+                                    bool gameRunning, bool newLaunchPending) {
+    return requestedSession != 0 && requestedSession == currentSession &&
+           gameRunning && !newLaunchPending;
+}
+
 // A one-shot return to Breeze, tied to the application session that was just
 // started. The main loop keeps pumping events during the delay.
 class BreezeLaunchHandoff final {
@@ -27,6 +41,7 @@ public:
 
     void cancel() { m_sessionId = 0; }
     bool pending() const { return m_sessionId != 0; }
+    std::uint64_t sessionId() const { return m_sessionId; }
 
     bool due(std::uint64_t sessionId, std::uint64_t nowNs) {
         if (!pending())

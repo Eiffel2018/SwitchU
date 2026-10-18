@@ -26,6 +26,8 @@ struct SystemAction {
     std::uint64_t requestId = 0;
     std::uint64_t titleId = 0;
     AccountUid uid{};
+    // Nonzero only for the automatic return after a PC-requested launch.
+    std::uint64_t breezeReturnSessionId = 0;
 };
 
 // The menu is an all-foreground applet: accepting multiple navigation actions

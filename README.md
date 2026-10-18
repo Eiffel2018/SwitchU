@@ -33,11 +33,19 @@ With Breeze's HOME toggle enabled (No restart, Fast restart or Overlay), a
 returned by the system account list. Other launchers retain their user picker.
 Games that do not use accounts are launched without a preselected user.
 
-After a successful launch, the daemon waits two seconds and reopens Breeze
-through its existing User Page or Album loader, allowing PC Connect to reconnect
-without pressing HOME. The delay does not block HOME, sleep or game-exit events.
+After a successful launch, the daemon waits two seconds, waits for AM to confirm
+the foreground transfer, and reopens Breeze. Automatic returns prefer the
+dedicated Album loader bundled with the daemon over a User Page override that
+may belong to another homebrew. PC Connect can then reconnect without HOME.
+Failed launches are retried after two seconds until Breeze announces it is
+running. An in-progress loader is probed every two seconds and gets ten seconds
+to cold-start before it is closed and retried; applets are never opened in parallel.
+The delay does not block HOME, sleep or game-exit events.
 An explicit HOME action, a new launch or a changed application session cancels
-the automatic return. Startup applets defer the return for up to 15 seconds.
+the automatic return. Startup applets defer each attempt for up to 15 seconds.
+Missing NRO/loader files, foreground failures and loader timeouts are recorded
+in `config/SwitchU/daemon*.log`. A `BreezePC recovery v2` startup line identifies
+this build in a newly collected log.
 
 AM does not identify the TCP client: this policy applies to launch requests
 from the identified Breeze applet, the path used by BreezePC's Start game.

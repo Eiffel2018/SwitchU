@@ -188,6 +188,7 @@ static constexpr const char* kBreezeNroPath            = "sdmc:/switch/Breeze/Br
 static constexpr const char* kBreezeUserPageLoaderPath = "sdmc:/atmosphere/contents/0100000000001013/exefs.nsp";
 static constexpr const char* kBreezeAlbumLoaderDir     = "/atmosphere/contents/0100000000001000/breeze_loader";
 static constexpr const char* kBreezeAlbumLoaderMain    = "sdmc:/atmosphere/contents/0100000000001000/breeze_loader/main";
+static constexpr const char* kBreezeAlbumLoaderNpdm    = "sdmc:/atmosphere/contents/0100000000001000/breeze_loader/main.npdm";
 static constexpr const char* kMenuExecutablePath       = "sdmc:/switch/SwitchU/bin/menu/main";
 // Written by this fork's daemon at boot (and by Breeze after installing the
 // fork) so Breeze can tell the Home-toggle fork from upstream SwitchU.
