@@ -82,6 +82,19 @@ game inputs. The main UI excludes rail/SYNC and provides 26 operations:
 24 buttons/directions plus the L3/R3 center clicks. Optional rail protocol
 input delivery depends on the virtual controller/style supported by the
 target and is not hardware-verified.
+
+The controller is shared by the daemon's serialized input worker. Each bounded
+operation now neutralizes input, detaches its virtual device, releases its HDLS
+work buffer and closes its HID debug service, including failure cleanup. It
+does not retain a virtual controller between clicks. The UI stops its existing
+Breeze Game input connection before enabling SwitchU controls.
+Authenticated `controller off` blocks further SwitchU button/axis input and
+cleans up the daemon's controller; `controller on` explicitly enables it again,
+and `controller status` reports the gate. OFF does not remove controllers
+owned by other processes. There is one authenticated operation per connection,
+so an idle client cannot hold the input worker indefinitely. These lifecycle
+fixes require daemon transport marker **v4**; do not use the earlier retained
+controller implementation when verifying physical controller coexistence.
 The [complete patched BreezePC sources and packaging instructions](tools/breezepc/README.md)
 are included. `python tools/package_breezepc.py dist/breezepc` creates a complete
 `BreezePC.zip` and an overwrite-only `BreezePC-update.zip`; the **BreezePC package**

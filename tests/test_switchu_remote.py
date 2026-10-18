@@ -157,6 +157,31 @@ class SwitchURemoteTests(unittest.TestCase):
         self.assertEqual(reply, "OK stick R x=-32768 y=32767 ms=100")
         self.assertEqual(server.commands, ["stick R -32768 32767 100"])
 
+    def test_controller_status_and_toggle_use_single_shot_commands(self):
+        for enabled, reply, command in ((None, "OK controller enabled", "controller status"),
+                                        (True, "OK controller enabled", "controller on"),
+                                        (False, "OK controller disabled", "controller off")):
+            with self.subTest(command=command):
+                server = self.with_server(command_reply=reply)
+                self.assertEqual(remote.controller("127.0.0.1", "pair", enabled, port=server.port), reply)
+                self.assertEqual(server.commands, [command])
+
+    def test_controller_toggle_unknown_receipt_is_never_replayed(self):
+        for close, reply in ((True, "OK controller enabled"),
+                             (False, "OK controller maybe"),
+                             (False, "OK controller enabled trailing")):
+            with self.subTest(close=close, reply=reply):
+                server = self.with_server(close_after_command=close, command_reply=reply)
+                with self.assertRaises(remote.AmbiguousControllerError):
+                    remote.controller("127.0.0.1", "pair", True, port=server.port, timeout=0.5)
+                self.assertEqual(server.commands, ["controller on"])
+
+    def test_controller_toggle_error_is_reported_without_replay(self):
+        server = self.with_server(command_reply="ERR controller unavailable")
+        with self.assertRaisesRegex(remote.RemoteError, "controller unavailable"):
+            remote.controller("127.0.0.1", "pair", False, port=server.port)
+        self.assertEqual(server.commands, ["controller off"])
+
     def test_invalid_stick_side_axes_or_duration_is_rejected_before_network(self):
         server = self.with_server()
         for side, x, y, duration in (("X", 0, 0, 100), ("L", -32769, 0, 100),

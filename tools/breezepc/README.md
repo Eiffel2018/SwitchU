@@ -39,8 +39,13 @@ including the eight stick directions and two center clicks. Rail and SYNC
 are outside this main controller layout.
 Each outer-pad click sends a bounded
 100 ms analog impulse; positive Y is up and the daemon centers the axes.
-HOME, Capture, rail and analog input need the updated daemon (transport log marker v3);
-the first d810bfa daemon supports only the original buttons.
+HOME, Capture, rail and analog input need the updated daemon. Use transport log
+marker **v4** for the controller lifecycle fix: each pulse releases the complete
+virtual device/work buffer/service, not only its buttons. The UI hands off
+from Breeze Game input before enabling SwitchU input and provides emergency
+OFF / explicit enable controls. OFF only cleans up the SwitchU-owned device.
+The first d810bfa daemon supports only the original buttons and retains its
+controller until the daemon exits; it must be replaced before coexistence testing.
 
 The original NRO/button protocol was tested with daemon `d810bfa`. A loader
 `started` response is not an NRO-readiness check; uncertain input is never

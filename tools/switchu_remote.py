@@ -35,6 +35,10 @@ class AmbiguousInputError(RemoteError):
     """The button press may have arrived, but no receipt arrived; never resend it."""
 
 
+class AmbiguousControllerError(RemoteError):
+    """Controller enable state may have changed, but its receipt was lost."""
+
+
 INPUT_BUTTONS = frozenset((
     "A", "B", "X", "Y", "L", "R", "ZL", "ZR", "PLUS", "MINUS",
     "LSTICK", "RSTICK", "UP", "DOWN", "LEFT", "RIGHT", "HOME", "CAPTURE",
@@ -107,11 +111,13 @@ def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
     """Send one authenticated command. Launches and inputs are never replayed."""
     if not code or "\n" in code or "\r" in code:
         raise ValueError("PC connect code is empty or invalid")
-    if command != "status" and not command.startswith(("launch ", "press ", "stick ")):
+    if (command not in ("status", "controller status", "controller on", "controller off")
+            and not command.startswith(("launch ", "press ", "stick "))):
         raise ValueError("unsupported SwitchU command")
     path = None
     input_press = None
     input_stick = None
+    controller_action = command if command in ("controller on", "controller off") else None
     if command.startswith("launch "):
         path = validate_sd_path(command[len("launch "):])
         command = "launch " + path
@@ -131,6 +137,7 @@ def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
 
     sent_launch = False
     sent_input = False
+    sent_controller = False
     try:
         with socket.create_connection((host, port), timeout=timeout) as sock:
             sock.settimeout(timeout)
@@ -145,9 +152,14 @@ def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
                 raise RemoteError("SwitchU authentication failed")
             sent_launch = path is not None
             sent_input = input_press is not None or input_stick is not None
+            sent_controller = controller_action is not None
             sock.sendall((command + "\n").encode("utf-8"))
             reply = _read_line(sock)
     except (OSError, ConnectionError, TimeoutError) as exc:
+        if sent_controller:
+            raise AmbiguousControllerError(
+                "SwitchU controller state is unknown; check status before acting again"
+            ) from exc
         if sent_input:
             raise AmbiguousInputError(
                 "button press was sent but its receipt was not received; do not repeat it automatically"
@@ -158,6 +170,10 @@ def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
             ) from exc
         raise RemoteError("cannot reach SwitchU remote channel: %s" % exc) from exc
     except RemoteError as exc:
+        if sent_controller:
+            raise AmbiguousControllerError(
+                "SwitchU controller state is unknown; check status before acting again"
+            ) from exc
         if sent_input:
             raise AmbiguousInputError(
                 "button press was sent but its receipt was invalid; do not repeat it automatically"
@@ -168,21 +184,36 @@ def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
         raise RemoteError(reply[4:])
     expected = ("OK pressed %s ms=%d" % input_press if input_press is not None
                 else "OK stick %s x=%d y=%d ms=%d" % input_stick if input_stick is not None
+                else "OK controller enabled" if command == "controller on"
+                else "OK controller disabled" if command == "controller off"
+                else "OK controller " if command == "controller status"
                 else "OK status " if path is None else "OK queued ")
     if not reply.startswith(expected):
         if sent_input:
             raise AmbiguousInputError(
                 "SwitchU returned no valid button receipt; the press may have been accepted"
             )
+        if controller_action is not None:
+            raise AmbiguousControllerError(
+                "SwitchU controller state is unknown; check status before acting again"
+            )
+        if command == "controller status":
+            raise RemoteError("unexpected SwitchU controller status reply")
         if path is not None:
             raise AmbiguousLaunchError(
                 "launch was sent but SwitchU returned no valid receipt; check status before retrying"
             )
         raise RemoteError("unexpected SwitchU status reply")
+    if controller_action is not None and reply != expected:
+        raise AmbiguousControllerError(
+            "SwitchU returned an invalid controller receipt; controller state is unknown"
+        )
     if sent_input and reply != expected:
         raise AmbiguousInputError(
             "SwitchU returned no valid button receipt; the press may have been accepted"
         )
+    if command == "controller status" and reply not in ("OK controller enabled", "OK controller disabled"):
+        raise RemoteError("unexpected SwitchU controller status reply")
     if path is not None and re.fullmatch(r"OK queued [1-9]\d*", reply) is None:
         raise AmbiguousLaunchError("launch was sent but its receipt ID is invalid; check status before retrying")
     return reply
@@ -209,6 +240,17 @@ def stick(host: str, code: str, side: str, x: int, y: int, duration_ms: int = 10
     side, x, y, duration_ms = validate_stick(side, x, y, duration_ms)
     return request(host, code, "stick %s %d %d %d" % (side, x, y, duration_ms),
                    port=port, timeout=timeout)
+
+
+def controller(host: str, code: str, enabled: bool | None = None, *,
+               port: int = DEFAULT_PORT, timeout: float = 3.0) -> str:
+    if enabled is None:
+        command = "controller status"
+    elif isinstance(enabled, bool):
+        command = "controller on" if enabled else "controller off"
+    else:
+        raise ValueError("controller enabled must be True, False, or None for status")
+    return request(host, code, command, port=port, timeout=timeout)
 
 
 def request_id(reply: str) -> int | None:

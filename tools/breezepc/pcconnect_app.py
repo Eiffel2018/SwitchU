@@ -431,6 +431,8 @@ class PadLink(threading.Thread):
         self.held = set()
         self.stop = threading.Event()
         self.recorder = None
+        self.cleanup_known = False
+        self.cleanup_error = "controller release has not been confirmed"
 
     def key(self, name, down):
         with self.lock:
@@ -453,13 +455,22 @@ class PadLink(threading.Thread):
                 self.out.put(("pad", "game input: %s (retrying)" % e))
                 self.stop.wait(3)
             finally:
-                if b is not None:
-                    if self.stop.is_set():
+                if self.stop.is_set():
+                    if b is None:
+                        self.cleanup_error = "no active Breeze session to confirm gamepad off"
+                    else:
                         try:
-                            b.cmd("gamepad off")
-                        except Exception:  # noqa: BLE001 - closing anyway
-                            pass
-                    b.close()
+                            reply = b.cmd("gamepad off")
+                            self.cleanup_known = reply.startswith("+OK")
+                            self.cleanup_error = "" if self.cleanup_known else "gamepad off was not acknowledged"
+                        except Exception as e:  # noqa: BLE001 - keep the handoff fail-closed
+                            self.cleanup_error = "gamepad off failed: %s" % e
+                if b is not None:
+                    try:
+                        b.close()
+                    except Exception as e:  # noqa: BLE001 - keep the handoff fail-closed
+                        self.cleanup_known = False
+                        self.cleanup_error = "Breeze session close failed: %s" % e
         self.out.put(("pad", ""))
 
     def loop(self, b):
@@ -526,6 +537,13 @@ class App:
         self.last_reply = ""
         self.switchu_generation = 0
         self.switchu_busy = False
+        self.switchu_waiting_for_pad = False
+        self.switchu_pad_deadline = 0.0
+        self.switchu_controller_state = None
+        self.switchu_controller_command_pending = False
+        self.pad_stopping = None
+        self.switchu_stop_btn = None
+        self.switchu_resume_btn = None
 
         self.canvas = tk.Canvas(root, width=self.view_w, height=self.view_h, bg="black", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
@@ -592,6 +610,7 @@ class App:
 
         # Game input: the keyboard and a Windows controller as a controller on the Switch.
         self.pad = None
+        self.pad_stopping = None
         gbar = tk.Frame(root)
         gbar.pack(fill="x")
         self.game_var = tk.BooleanVar(value=False)
@@ -660,6 +679,18 @@ class App:
 
     def on_game_input(self):
         if self.game_var.get():
+            if (self._switchu_popup_open() or self.switchu_waiting_for_pad or self.switchu_busy
+                    or self.switchu_controller_command_pending
+                    or self.switchu_controller_state in ("enabled", "unknown")):
+                self.game_var.set(False)
+                self.status.config(text="Stop SwitchU virtual input and close its controls before enabling Game input.")
+                return
+            if self.pad_stopping is not None:
+                if self.pad_stopping.is_alive() or not self.pad_stopping.cleanup_known:
+                    self.game_var.set(False)
+                    self.status.config(text="Game input is blocked until Breeze confirms the previous gamepad was released.")
+                    return
+                self.pad_stopping = None
             self.pad = PadLink(self.cfg["host"], self.cfg["code"], self.out, self.game_player(), self.label_var.get())
             self.pad.recorder = self.recorder
             self.pad.start()
@@ -668,7 +699,61 @@ class App:
             self.canvas.focus_set()
         else:
             self.stop_pad()
-            self.status.config(text=HELP)
+            if self._switchu_popup_open() and self.pad_stopping is not None:
+                self._begin_switchu_pad_handoff()
+            else:
+                self.status.config(text=HELP)
+
+    def _switchu_popup_open(self):
+        try:
+            return self.switchu_controller is not None and self.switchu_controller.winfo_exists()
+        except tk.TclError:
+            return False
+
+    def _switchu_pad_ready(self):
+        if self.pad is not None:
+            return False
+        if self.pad_stopping is None:
+            return True
+        return not self.pad_stopping.is_alive() and self.pad_stopping.cleanup_known
+
+    def _begin_switchu_pad_handoff(self):
+        self.game_var.set(False)
+        if self.pad is not None:
+            self.stop_pad()
+        pad = self.pad_stopping
+        if pad is None:
+            self.switchu_waiting_for_pad = False
+            self._set_switchu_buttons()
+            self._maybe_enable_switchu_controller()
+            return
+        self.switchu_waiting_for_pad = True
+        self.switchu_pad_deadline = time.monotonic() + 5.0
+        self.status.config(text="Releasing Breeze Game input before enabling SwitchU controls...")
+        self._poll_switchu_pad_handoff()
+
+    def _poll_switchu_pad_handoff(self):
+        if not self.switchu_waiting_for_pad:
+            return
+        pad = self.pad_stopping
+        if pad is not None and pad.is_alive():
+            if time.monotonic() >= self.switchu_pad_deadline:
+                self.switchu_waiting_for_pad = False
+                self.status.config(text="SwitchU controls remain blocked: Breeze Game input did not stop within 5 seconds.")
+                self._set_switchu_buttons()
+                return
+            self.root.after(50, self._poll_switchu_pad_handoff)
+            return
+        if pad is not None and not pad.cleanup_known:
+            self.switchu_waiting_for_pad = False
+            self.status.config(text="SwitchU controls remain blocked: Breeze did not confirm gamepad release (%s)." % pad.cleanup_error)
+            self._set_switchu_buttons()
+            return
+        self.pad_stopping = None
+        self.switchu_waiting_for_pad = False
+        self.status.config(text="Breeze Game input released; SwitchU controls are ready.")
+        self._set_switchu_buttons()
+        self._maybe_enable_switchu_controller()
 
     def game_player(self):
         try:
@@ -688,11 +773,23 @@ class App:
         pad, self.pad = self.pad, None
         if pad is not None:
             pad.stop.set()
+            self.pad_stopping = pad
         return pad
 
     def on_home(self):
+        if self._switchu_popup_open():
+            if self.switchu_waiting_for_pad or not self._switchu_pad_ready():
+                self.status.config(text="HOME is blocked until Breeze Game input release is confirmed.")
+            else:
+                self.send_switchu_button("HOME")
+            return
+        if self.switchu_controller_state in ("enabled", "unknown") or self.switchu_controller_command_pending:
+            self.status.config(text="Stop SwitchU virtual input in SwitchU controls before using Breeze HOME.")
+            return
         if self.pad is not None:
             self.pad.send("gamepress HOME 120")
+        elif not self._switchu_pad_ready():
+            self.status.config(text="HOME is blocked until Breeze Game input release is confirmed.")
         else:
             # No virtual controller of ours: attach one for the press only.
             self.link.send("gamepress HOME 120")
@@ -887,6 +984,10 @@ class App:
     def open_switchu_controller(self):
         if self.switchu_controller is not None and self.switchu_controller.winfo_exists():
             self.switchu_controller.lift()
+            if self.pad is not None or (self.pad_stopping is not None and not self.switchu_waiting_for_pad):
+                self._begin_switchu_pad_handoff()
+            elif self.switchu_controller_state is None and not self.switchu_controller_command_pending:
+                self._maybe_enable_switchu_controller()
             return
         win = tk.Toplevel(self.root)
         win.title("SwitchU Controller")
@@ -895,6 +996,14 @@ class App:
         self.switchu_controller = win
         self.switchu_input_buttons = []
         self.switchu_input_canvases = []
+        command_bar = tk.Frame(win)
+        command_bar.pack(fill="x", padx=12, pady=(8, 0))
+        self.switchu_stop_btn = tk.Button(command_bar, text="Stop virtual input",
+                                          command=self.stop_switchu_controller)
+        self.switchu_stop_btn.pack(side="left", padx=3)
+        self.switchu_resume_btn = tk.Button(command_bar, text="Resume input",
+                                            command=self.resume_switchu_controller)
+        self.switchu_resume_btn.pack(side="left", padx=3)
         canvas = tk.Canvas(win, width=780, height=670, bg="#f5f7fa", highlightthickness=0)
         canvas.pack(padx=10, pady=8)
         self.switchu_controller_canvas = canvas
@@ -940,7 +1049,66 @@ class App:
         canvas.create_text(390, 657, text="100 ms taps  ·  sticks auto-center  ·  center = L3 / R3",
                           fill="#344252", font=("Segoe UI", 10))
         win.protocol("WM_DELETE_WINDOW", self.close_switchu_controller)
+        self._begin_switchu_pad_handoff()
+
+    def _maybe_enable_switchu_controller(self):
+        # Startup enables SwitchU only after any Breeze PadLink has exited and
+        # positively acknowledged gamepad off. Unknown/disabled states need an
+        # explicit user action; a failed command is never retried automatically.
+        if (not self._switchu_popup_open() or not self._switchu_pad_ready()
+                or self.switchu_waiting_for_pad or self.switchu_controller_state is not None
+                or self.switchu_controller_command_pending):
+            self._set_switchu_buttons()
+            return
+        self._start_switchu_controller_command(True)
+
+    def _start_switchu_controller_command(self, enabled):
+        if self.switchu_controller_command_pending or (enabled and not self._switchu_pad_ready()):
+            self.status.config(text="SwitchU controller change is blocked until Breeze input release is confirmed.")
+            self._set_switchu_buttons()
+            return
+        if enabled and self.switchu_busy:
+            self.status.config(text="Resume is blocked until the pending SwitchU request finishes.")
+            self._set_switchu_buttons()
+            return
+        self.switchu_controller_command_pending = True
         self._set_switchu_buttons()
+        generation = self.switchu_generation
+        host, code = self.cfg["host"], self.cfg["code"]
+        action = "on" if enabled else "off"
+        self.status.config(text="Requesting SwitchU virtual input %s..." % action)
+        threading.Thread(target=self._switchu_controller_worker,
+                         args=(generation, host, code, enabled), daemon=True).start()
+
+    def stop_switchu_controller(self):
+        if self.switchu_controller_command_pending:
+            self.status.config(text="SwitchU controller state request is still pending.")
+            return
+        self._start_switchu_controller_command(False)
+
+    def resume_switchu_controller(self):
+        if not self._switchu_popup_open():
+            return
+        if not self._switchu_pad_ready() or self.switchu_waiting_for_pad:
+            self.status.config(text="Resume is blocked until Breeze confirms Game input has stopped.")
+            return
+        self._start_switchu_controller_command(True)
+
+    def _switchu_controller_worker(self, generation, host, code, enabled):
+        action = "on" if enabled else "off"
+        try:
+            reply = switchu_remote.controller(host, code, enabled, timeout=3.0)
+            state = "enabled" if enabled else "disabled"
+            message = "SwitchU virtual input %s." % state
+        except switchu_remote.AmbiguousControllerError as exc:
+            state = "unknown"
+            message = ("SwitchU controller state is unknown: %s. It was not resent. "
+                       "Install/update SwitchU and reboot before relying on controller gating." % exc)
+        except (switchu_remote.RemoteError, ValueError) as exc:
+            state = "unknown"
+            message = ("SwitchU controller %s failed: %s. Input remains blocked; this daemon may "
+                       "need the updated controller channel and a reboot." % (action, exc))
+        self.out.put(("switchu_controller", generation, state, message))
 
     def _add_switchu_button(self, parent, label, key):
         button = tk.Button(parent, text=label, width=5,
@@ -989,8 +1157,14 @@ class App:
             self.switchu_input_canvases = []
 
     def send_switchu_button(self, button):
+        if self.switchu_controller_state != "enabled" or self.switchu_controller_command_pending:
+            self.status.config(text="SwitchU input is disabled until the controller is explicitly enabled.")
+            return
         if self.switchu_busy:
             self.status.config(text="A SwitchU request is pending; no button press was sent.")
+            return
+        if self.switchu_waiting_for_pad or not self._switchu_pad_ready():
+            self.status.config(text="SwitchU input is blocked until Breeze Game input release is confirmed.")
             return
         self.switchu_busy = True
         self._set_switchu_buttons()
@@ -1001,8 +1175,14 @@ class App:
                          args=(generation, host, code, button), daemon=True).start()
 
     def send_switchu_stick(self, side, x, y):
+        if self.switchu_controller_state != "enabled" or self.switchu_controller_command_pending:
+            self.status.config(text="SwitchU input is disabled until the controller is explicitly enabled.")
+            return
         if self.switchu_busy:
             self.status.config(text="A SwitchU request is pending; no stick pulse was sent.")
+            return
+        if self.switchu_waiting_for_pad or not self._switchu_pad_ready():
+            self.status.config(text="SwitchU input is blocked until Breeze Game input release is confirmed.")
             return
         self.switchu_busy = True
         self._set_switchu_buttons()
@@ -1056,15 +1236,29 @@ class App:
                          args=(generation, host, code, path), daemon=True).start()
 
     def _set_switchu_buttons(self):
-        state = "disabled" if self.switchu_busy else "normal"
+        handoff_blocked = (self.switchu_busy or self.switchu_waiting_for_pad
+                           or not self._switchu_pad_ready())
+        state = "disabled" if handoff_blocked else "normal"
         self.switchu_breeze_btn.config(state=state)
         self.switchu_nro_btn.config(state=state)
         self.switchu_status_btn.config(state=state)
         self.switchu_controller_btn.config(state=state)
+        input_blocked = (handoff_blocked or self.switchu_controller_state != "enabled"
+                         or self.switchu_controller_command_pending)
+        input_state = "disabled" if input_blocked else "normal"
         for button in self.switchu_input_buttons:
-            button.config(state=state)
+            button.config(state=input_state)
         for canvas in getattr(self, "switchu_input_canvases", ()):
-            canvas.config(state=state)
+            canvas.config(state=input_state)
+        command_pending = self.switchu_controller_command_pending
+        if self.switchu_stop_btn is not None:
+            self.switchu_stop_btn.config(state="disabled" if command_pending else "normal")
+        if self.switchu_resume_btn is not None:
+            can_resume = (self._switchu_popup_open() and self._switchu_pad_ready()
+                          and not self.switchu_waiting_for_pad and not command_pending
+                          and not self.switchu_busy
+                          and self.switchu_controller_state != "enabled")
+            self.switchu_resume_btn.config(state="normal" if can_resume else "disabled")
 
     def _switchu_launch_worker(self, generation, host, code, path):
         try:
@@ -1695,8 +1889,21 @@ class App:
                             self.switchu_busy = False
                             self._set_switchu_buttons()
                         self.status.config(text=message)
+                elif item[0] == "switchu_controller":
+                    _, generation, state, message = item
+                    if generation == self.switchu_generation:
+                        self.switchu_controller_command_pending = False
+                        self.switchu_controller_state = state
+                        self._set_switchu_buttons()
+                        self.status.config(text=message)
                 elif item[0] == "pad":
                     self.pad_info.config(text=item[1] if self.pad is not None else "")
+                    if self.pad_stopping is not None and not self.pad_stopping.is_alive():
+                        if self.switchu_waiting_for_pad:
+                            self._poll_switchu_pad_handoff()
+                        elif self.pad_stopping.cleanup_known:
+                            self.pad_stopping = None
+                            self._set_switchu_buttons()
         except queue.Empty:
             pass
         if latest_frame is not None:
