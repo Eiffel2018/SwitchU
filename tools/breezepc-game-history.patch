@@ -1,0 +1,116 @@
+diff --git a/pcconnect_app.py b/pcconnect_app.py
+index 7c07ddf..ffc77da 100644
+--- a/pcconnect_app.py
++++ b/pcconnect_app.py
+@@ -33,7 +33,7 @@ The last ip and code are remembered in ~/.breeze_pc.json.
+   from the console to the SD card or back. With the box unticked a snapshot
+   can only be taken while the game is closed.
+ - Stop game ends the running game at once, as if it had crashed: anything it
+-  has not saved is lost. Start game starts the last game again; Breeze closes
++  has not saved is lost. Start game offers recently observed games; Breeze closes
+   to let it start and comes back the way it does after any exit (press HOME
+   if it does not). Together with Restore: Stop game, Restore, Start game.
+ - Game input sends the keyboard and a Windows controller to the game instead
+@@ -109,6 +109,7 @@ from pcconnect import Breeze  # noqa: E402
+ from pcconnect_files import FileManager, pc_folder_name  # noqa: E402
+ from pcconnect_album import Album  # noqa: E402
+ from pcconnect_text import TextView, plain  # noqa: E402
++from pc_game_history import clean as clean_game_history, remember as remember_game, valid_tid  # noqa: E402
+ 
+ CONFIG = os.path.join(os.path.expanduser("~"), ".breeze_pc.json")
+ SCREEN_W, SCREEN_H = 1280, 720
+@@ -512,6 +513,10 @@ class App:
+     def __init__(self, root, host, code, cfg=None):
+         self.root = root
+         self.cfg = dict(cfg or {}, host=host, code=code)
++        self.cfg["game_history"] = clean_game_history(self.cfg.get("game_history", []))
++        old_game = self.cfg.get("last_game", ["", ""])
++        if isinstance(old_game, (list, tuple)) and len(old_game) >= 2:
++            self.cfg["game_history"] = remember_game(self.cfg["game_history"], old_game[0], old_game[1])
+         root.title("Breeze PC - %s" % host)
+         self.state = {}
+         self.photo = None
+@@ -710,6 +715,7 @@ class App:
+         self.game = (tid, name)
+         if tid:
+             self.cfg["last_game"] = [tid, name]
++            self.cfg["game_history"] = remember_game(self.cfg.get("game_history"), tid, name)
+             self.save_cfg()
+             if self.album is not None and self.album.win.winfo_exists():
+                 self.album.set_folder(self.game_dir("album"), self.game_label())
+@@ -1157,14 +1163,72 @@ class App:
+             self.link.send("gamestop")
+ 
+     def on_start_game(self):
+-        if self.save_tid:
+-            self.link.send("gamestart " + self.save_tid)
++        if self.save and self.save.get("game_running"):
++            return
++        history = clean_game_history(self.cfg.get("game_history", []))
++        known_tids = {entry["tid"] for entry in history}
++        for fallback in (self.cfg.get("last_game", ["", ""]), [self.save_tid, ""]):
++            if isinstance(fallback, (list, tuple)) and len(fallback) >= 2:
++                tid, name = valid_tid(fallback[0]), str(fallback[1] or "").strip()
++            else:
++                continue
++            if tid and tid not in known_tids:
++                history.append({"tid": tid, "name": name})
++                known_tids.add(tid)
++        if not history:
++            messagebox.showinfo("Start game", "No game has been observed yet.", parent=self.root)
++            return
++        previous = getattr(self, "start_menu", None)
++        if previous is not None:
++            try:
++                previous.unpost()
++            except tk.TclError:
++                pass
++            try:
++                previous.destroy()
++            except tk.TclError:
++                pass
++            self.start_menu = None
++        menu = tk.Menu(self.root, tearoff=0)
++        self.start_menu = menu
++        menu.bind("<Unmap>", lambda _event, popup=menu: self.close_start_menu(popup), add="+")
++        for entry in history:
++            tid, name = entry["tid"], entry["name"]
++            label = "%s  [%s]" % (name or tid, tid)
++            menu.add_command(label=label, command=lambda selected=tid: self.start_game(selected))
++        x = self.start_btn.winfo_rootx()
++        y = self.start_btn.winfo_rooty() + self.start_btn.winfo_height()
++        menu.tk_popup(x, y)
++        menu.grab_release()
++
++    def close_start_menu(self, menu):
++        """Release the popup after selection or cancellation."""
++        if getattr(self, "start_menu", None) is menu:
++            self.start_menu = None
++        try:
++            def destroy_if_open():
++                try:
++                    if menu.winfo_exists():
++                        menu.destroy()
++                except tk.TclError:
++                    pass
++            self.root.after_idle(destroy_if_open)
++        except tk.TclError:
++            pass
++
++    def start_game(self, tid):
++        tid = str(tid or "").strip().upper()
++        if not clean_game_history([{"tid": tid, "name": ""}]):
++            return
++        if self.save and self.save.get("game_running"):
++            return
++        self.link.send("gamestart " + tid)
+ 
+     def on_game_reply(self, line, reply):
+         if not reply.startswith("+OK"):
+             messagebox.showerror("Game", reply[5:] if reply.startswith("-ERR ") else reply, parent=self.root)
+         elif line.startswith("gamestart"):
+-            self.status.config(text="The game is starting. Breeze has closed; press HOME on the Switch if it does not come back.")
++            self.status.config(text="The game is starting. Waiting for the daemon to restore Breeze and for PC connect to reconnect.")
+         self.link.send("save")
+ 
+     def redirect_on(self):
