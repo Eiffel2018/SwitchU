@@ -7,14 +7,14 @@ using u8 = std::uint8_t;
 using u32 = std::uint32_t;
 using u64 = std::uint64_t;
 using s32 = std::int32_t;
-using Result = std::int32_t;
+using Result = std::uint32_t;
 
 constexpr Result Module_Libnx = 345;
 constexpr Result LibnxError_OutOfMemory = 2;
 constexpr Result LibnxError_BadInput = 10;
-#define MAKERESULT(module, description) (static_cast<Result>(((module) << 9) | (description)))
-#define R_SUCCEEDED(result) ((result) >= 0)
-#define R_FAILED(result) ((result) < 0)
+#define MAKERESULT(module, description) (static_cast<Result>((module) | ((description) << 9)))
+#define R_SUCCEEDED(result) ((result) == 0)
+#define R_FAILED(result) ((result) != 0)
 
 constexpr u8 HidDeviceType_FullKey3 = 3;
 constexpr u8 HidNpadInterfaceType_Bluetooth = 1;

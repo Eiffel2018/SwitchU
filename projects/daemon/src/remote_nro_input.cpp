@@ -9,6 +9,10 @@ namespace {
 constexpr u32 kMaxHoldMs = 1000;
 constexpr size_t kWorkBufferAlignment = 0x1000;
 constexpr size_t kWorkBufferSize = 0x1000;
+// Publish a connected neutral controller before the pulse. The game's input
+// loop must observe the new device before a short press starts; otherwise its
+// first 100 ms pulse can be consumed entirely by controller discovery.
+constexpr u64 kControllerSettleNs = 750'000'000ULL;
 constexpr u64 kAllowedButtons = 0xFFFFULL | HiddbgNpadButton_Home | HiddbgNpadButton_Capture
     | HidNpadButton_LeftSL | HidNpadButton_LeftSR | HidNpadButton_RightSL | HidNpadButton_RightSR;
 static_assert(HiddbgNpadButton_Home == (1ULL << 18));
@@ -114,9 +118,14 @@ Result initializeController() {
         return cleanupOwnedControllerLocked(result);
 
     g_deviceAttached = true;
+    const HiddbgHdlsState neutral = makeState(0);
+    g_stateMayBeActive = true;
+    result = hiddbgSetHdlsState(g_handle, &neutral);
+    if (R_FAILED(result))
+        return cleanupOwnedControllerLocked(result);
+    g_stateMayBeActive = false;
+    svcSleepThread(kControllerSettleNs);
     g_initialized = true;
-    // Give hid time to publish the new controller before the first state update.
-    svcSleepThread(100'000'000ULL);
     return 0;
 }
 

@@ -11,6 +11,7 @@ constexpr Result kReleaseFailure = -78;
 constexpr Result kOtherFailure = -79;
 std::vector<std::string> events;
 std::vector<HiddbgHdlsState> states;
+std::vector<u64> sleeps;
 Result failInitialize = 0;
 Result failWorkBufferAttach = 0;
 Result failDeviceAttach = 0;
@@ -22,6 +23,7 @@ int setCallCount = 0;
 void reset() {
     events.clear();
     states.clear();
+    sleeps.clear();
     failInitialize = 0;
     failWorkBufferAttach = 0;
     failDeviceAttach = 0;
@@ -51,7 +53,8 @@ bool successButtonPulse() {
     const Result rc = switchu::remote_input::pressButton(1ULL << 10, 25);
     return check(rc == 0, "button pulse succeeds")
         && check(containsInOrder({"init", "work+", "device+", "state", "sleep", "state", "device-", "work-", "exit"}), "button pulse releases and destroys owned controller")
-        && check(states.size() == 2 && states[0].buttons == (1ULL << 10) && states[1].buttons == 0, "button state is released before teardown");
+        && check(states.size() == 3 && states[0].buttons == 0 && states[1].buttons == (1ULL << 10) && states[2].buttons == 0, "neutral device is published before the short pulse and released before teardown")
+        && check(sleeps == std::vector<u64>{750'000'000, 25'000'000}, "device settles before the requested pulse; pulse is not lengthened");
 }
 
 bool successStickPulse() {
@@ -59,8 +62,9 @@ bool successStickPulse() {
     const Result rc = switchu::remote_input::moveStick(false, -1234, 2345, 40);
     return check(rc == 0, "stick pulse succeeds")
         && check(containsInOrder({"init", "work+", "device+", "state", "sleep", "state", "device-", "work-", "exit"}), "stick pulse releases and destroys owned controller")
-        && check(states.size() == 2 && states[0].analog_stick_l.x == -1234 && states[0].analog_stick_l.y == 2345
-            && states[1].analog_stick_l.x == 0 && states[1].analog_stick_l.y == 0, "stick returns to center before teardown");
+        && check(states.size() == 3 && states[0].analog_stick_l.x == 0 && states[0].analog_stick_l.y == 0
+            && states[1].analog_stick_l.x == -1234 && states[1].analog_stick_l.y == 2345
+            && states[2].analog_stick_l.x == 0 && states[2].analog_stick_l.y == 0, "stick publishes neutral before the impulse and returns to center before teardown");
 }
 
 bool initFailureHasNoCleanupCalls() {
@@ -73,7 +77,7 @@ bool initFailureHasNoCleanupCalls() {
 
 bool stateFailureStillCleansUp() {
     reset();
-    failSetCall = 1;
+    failSetCall = 2;
     failDetach = kReleaseFailure;
     failRelease = kOtherFailure;
     const Result rc = switchu::remote_input::pressButton(1, 10);
@@ -83,7 +87,7 @@ bool stateFailureStillCleansUp() {
 
 bool neutralFailureStillCleansUp() {
     reset();
-    failSetCall = 2;
+    failSetCall = 3;
     const Result rc = switchu::remote_input::pressButton(1, 10);
     return check(rc == kFailure, "neutral-state failure is returned")
         && check(containsInOrder({"state", "sleep", "state", "state", "device-", "work-", "exit"}), "failed neutral update is retried before teardown");
@@ -121,6 +125,17 @@ bool setupFailuresFreeOwnedResources() {
         && check(containsInOrder({"init", "work+", "device+", "work-", "exit"}), "device attach failure releases buffer before service exit");
 }
 
+bool initialNeutralFailureDoesNotSendPulse() {
+    reset();
+    failSetCall = 1;
+    const Result rc = switchu::remote_input::pressButton(1, 100);
+    return check(rc == kFailure && sleeps.empty(), "failed initial publication sends no pressed state or delay")
+        && check(states.size() == 2 && states[0].buttons == 0 && states[1].buttons == 0,
+                 "failed initial publication only retries neutral")
+        && check(containsInOrder({"device+", "state", "state", "device-", "work-", "exit"}),
+                 "failed initial publication tears down all owned resources");
+}
+
 } // namespace
 
 extern "C" {
@@ -146,7 +161,7 @@ Result hiddbgSetHdlsState(HiddbgHdlsHandle, const HiddbgHdlsState* state) {
     ++setCallCount;
     return setCallCount == failSetCall ? kFailure : 0;
 }
-void svcSleepThread(u64) { events.emplace_back("sleep"); }
+void svcSleepThread(u64 ns) { events.emplace_back("sleep"); sleeps.push_back(ns); }
 }
 
 int main() {
@@ -159,6 +174,7 @@ int main() {
     ok = detachFailureStillReleasesSession() && ok;
     ok = releaseFailureStillExitsService() && ok;
     ok = setupFailuresFreeOwnedResources() && ok;
+    ok = initialNeutralFailureDoesNotSendPulse() && ok;
     if (!ok)
         return EXIT_FAILURE;
     std::cout << "remote NRO input host tests passed\n";
