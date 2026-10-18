@@ -17,9 +17,7 @@ namespace switchu::log_detail {
 
 inline void ensure_log_dir(const char* log_dir) {
     std::error_code ec;
-    std::filesystem::create_directory("sdmc:/config", ec);
-    ec.clear();
-    std::filesystem::create_directory(log_dir, ec);
+    std::filesystem::create_directories(log_dir, ec);
 }
 
 inline bool read_local_time(std::tm& local_time, long& milliseconds, long& tenths) {

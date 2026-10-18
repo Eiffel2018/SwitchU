@@ -634,7 +634,7 @@ void WiiUMenuApp::menuFocusTrace(const char* fmt, ...) {
     std::vsnprintf(line, sizeof(line), fmt, args);
     va_end(args);
     DebugLog::log("[focus] %s", line);
-    if (FILE* file = std::fopen("sdmc:/config/SwitchU/menu_focus.log", "a")) {
+    if (FILE* file = std::fopen("sdmc:/logs/SwitchU/menu_focus.log", "a")) {
         std::fprintf(file, "%s\n", line);
         std::fclose(file);
     }

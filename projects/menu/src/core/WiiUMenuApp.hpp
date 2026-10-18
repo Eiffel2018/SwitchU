@@ -276,7 +276,7 @@ private:
     void launchHomebrewMenu();
     void openCurrentUserPage();
     void createQuickSettings();
-    // Appends one line to sdmc:/config/SwitchU/menu_focus.log, opening and
+    // Appends one line to sdmc:/logs/SwitchU/menu_focus.log, opening and
     // closing the file each time so it can be read while the menu is running.
     static void menuFocusTrace(const char* fmt, ...);
     void openQuickSettings();

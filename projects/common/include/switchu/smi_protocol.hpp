@@ -210,7 +210,7 @@ static constexpr const char* kDaemonForkInfoPath = "sdmc:/atmosphere/contents/01
 // destroy them, or a full-screen layer stays on the display.
 static constexpr const char* kBreezeOverlayLayersPath = "sdmc:/config/SwitchU/breeze_overlay_layers";
 // Power events, one fopen/fclose per line so a hang still leaves the trail.
-static constexpr const char* kPowerLogPath = "sdmc:/config/SwitchU/power.log";
+static constexpr const char* kPowerLogPath = "sdmc:/logs/SwitchU/power.log";
 
 // Breeze overlay (fork-only). kBreezeHomeToggleFlag = "overlay" keeps Breeze
 // alive behind the running game; HOME then shows and hides Breeze on its own

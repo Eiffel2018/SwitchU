@@ -44,7 +44,7 @@ The delay does not block HOME, sleep or game-exit events.
 An explicit HOME action, a new launch or a changed application session cancels
 the automatic return. Startup applets defer each attempt for up to 15 seconds.
 Missing NRO/loader files, foreground failures and loader timeouts are recorded
-in `config/SwitchU/daemon*.log`. A `BreezePC recovery v2` startup line identifies
+in `logs/SwitchU/daemon*.log`. A `BreezePC recovery v2` startup line identifies
 this build in a newly collected log.
 
 AM does not identify the TCP client: this policy applies to launch requests
