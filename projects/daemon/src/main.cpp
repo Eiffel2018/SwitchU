@@ -3694,7 +3694,7 @@ int main(int argc, char* argv[]) {
     switchu::FileLog::log("[daemon] main() entry");
     std::error_code configError;
     std::filesystem::create_directories("sdmc:/config/SwitchU", configError);
-    switchu::FileLog::log("[daemon] Remote NRO channel v4: port=6802 loader=one-shot boot=bundled input=home,sticks controller=transient logs=logs/SwitchU");
+    switchu::FileLog::log("[daemon] Remote NRO channel v5: port=6802 loader=one-shot boot=bundled input=home,sticks controller=transient capture=jpeg home=retain-nro logs=logs/SwitchU");
 
     ueventCreate(&g_mainWakeEvent, true);
     ueventCreate(&g_controlCacheWakeEvent, true);

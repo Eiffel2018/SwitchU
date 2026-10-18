@@ -11,11 +11,12 @@ from tools import switchu_remote as remote
 
 class MockSwitchU:
     def __init__(self, *, auth=True, command_reply="OK queued 7", greeting="SWITCHU 1",
-                 close_after_command=False):
+                 close_after_command=False, payload=None):
         self.auth = auth
         self.command_reply = command_reply
         self.greeting = greeting
         self.close_after_command = close_after_command
+        self.payload = payload
         self.commands = []
         self.auth_lines = []
         self.server = socket.socket()
@@ -43,13 +44,17 @@ class MockSwitchU:
                 self.auth_lines.append(auth)
                 if not self.auth or not auth.startswith("auth "):
                     conn.sendall(b"ERR auth\n")
+                    reader.close()
                     continue
                 conn.sendall(b"OK auth\n")
                 line = reader.readline().decode().rstrip("\r\n")
+                reader.close()
                 self.commands.append(line)
                 if self.close_after_command:
                     continue
                 conn.sendall((self.command_reply + "\n").encode())
+                if self.payload is not None:
+                    conn.sendall(self.payload)
 
     def close(self):
         self.stop.set()
@@ -58,6 +63,38 @@ class MockSwitchU:
 
 
 class SwitchURemoteTests(unittest.TestCase):
+    def test_capture_reads_exact_binary_after_header(self):
+        jpeg = b"\xff\xd8binary\nframe\xff\xd9"
+        server = self.with_server(command_reply="OK capture bytes=%d width=1280 height=720 format=jpeg" % len(jpeg), payload=jpeg)
+        self.assertEqual(remote.capture("127.0.0.1", "1234", port=server.port), jpeg)
+        self.assertEqual(server.commands, ["capture"])
+
+    def test_capture_rejects_oversized_or_invalid_header(self):
+        for header in ("OK capture bytes=524289 width=1280 height=720 format=jpeg",
+                       "OK capture bytes=0 width=1280 height=720 format=jpeg",
+                       "OK capture bytes=4 width=1 height=1 format=jpeg"):
+            with self.subTest(header=header):
+                server = self.with_server(command_reply=header)
+                with self.assertRaises(remote.RemoteError):
+                    remote.capture("127.0.0.1", "1234", port=server.port)
+
+    def test_capture_rejects_truncated_payload_and_does_not_resend(self):
+        server = self.with_server(command_reply="OK capture bytes=8 width=1280 height=720 format=jpeg", payload=b"\xff\xd8")
+        with self.assertRaisesRegex(remote.RemoteError, "incomplete"):
+            remote.capture("127.0.0.1", "1234", port=server.port)
+        self.assertEqual(server.commands, ["capture"])
+
+    def test_capture_rejects_corrupt_jpeg(self):
+        server = self.with_server(command_reply="OK capture bytes=4 width=1280 height=720 format=jpeg", payload=b"nope")
+        with self.assertRaisesRegex(remote.RemoteError, "complete JPEG"):
+            remote.capture("127.0.0.1", "1234", port=server.port)
+
+    def test_capture_requires_auth(self):
+        server = self.with_server(auth=False)
+        with self.assertRaises(remote.RemoteError):
+            remote.capture("127.0.0.1", "wrong", port=server.port)
+        self.assertEqual(server.commands, [])
+
     def with_server(self, **kwargs):
         server = MockSwitchU(**kwargs)
         self.addCleanup(server.close)

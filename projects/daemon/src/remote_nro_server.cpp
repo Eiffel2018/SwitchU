@@ -2,6 +2,7 @@
 
 #include "remote_nro_protocol.hpp"
 #include "remote_nro_input.hpp"
+#include "remote_nro_capture.hpp"
 #include <switch.h>
 #include <switchu/file_log.hpp>
 
@@ -170,7 +171,9 @@ void sleepPoll() {
 bool sendAll(int fd, std::string_view value, const char* stage) {
     std::size_t sent = 0;
     unsigned int polls = 0;
-    while (sent < value.size() && g_running.load() && polls < 40) {
+    const u64 started = armGetSystemTick();
+    while (sent < value.size() && g_running.load() && polls < 40 &&
+           armTicksToNs(armGetSystemTick() - started) < 2'000'000'000ULL) {
         const ssize_t count = ::send(fd, value.data() + sent, value.size() - sent, 0);
         if (count > 0) {
             sent += static_cast<std::size_t>(count);
@@ -368,6 +371,28 @@ const char* serveClient(int fd) {
             } else if (!sendAll(fd, g_inputBlocked.load()
                 ? "OK controller disabled\n" : "OK controller enabled\n", "controller-response")) {
                 return "controller-response-failed";
+            }
+        } else if (command.kind == CommandKind::Capture) {
+            void* image = nullptr;
+            std::size_t size = 0;
+            const Result rc = switchu::remote_capture::captureJpeg(&image, &size);
+            char response[128];
+            if (R_FAILED(rc)) {
+                const int count = std::snprintf(response, sizeof(response),
+                    "ERR capture rc=0x%08X\n", rc);
+                diagnostic("capture-failed", fd, 0, rc);
+                if (count > 0)
+                    (void)sendAll(fd, std::string_view(response, count), "capture-error");
+            } else {
+                const int count = std::snprintf(response, sizeof(response),
+                    "OK capture bytes=%zu width=1280 height=720 format=jpeg\n", size);
+                const bool sent = count > 0 &&
+                    sendAll(fd, std::string_view(response, count), "capture-header") &&
+                    sendAll(fd, std::string_view(static_cast<const char*>(image), size), "capture-image");
+                std::free(image);
+                if (!sent)
+                    return "capture-response-failed";
+                // Avoid one SD log write per preview frame.
             }
         } else if (command.kind == CommandKind::Launch) {
             if (!queueLaunch(fd, command.argument))

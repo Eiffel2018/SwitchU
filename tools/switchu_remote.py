@@ -253,6 +253,47 @@ def controller(host: str, code: str, enabled: bool | None = None, *,
     return request(host, code, command, port=port, timeout=timeout)
 
 
+def capture(host: str, code: str, *, port: int = DEFAULT_PORT,
+            timeout: float = 3.0) -> bytes:
+    """Read the console's current 1280x720 JPEG without opening Breeze."""
+    if not code or "\n" in code or "\r" in code:
+        raise ValueError("PC connect code is empty or invalid")
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            sock.settimeout(timeout)
+            if _read_line(sock) != "SWITCHU 1":
+                raise RemoteError("SwitchU remote channel is unavailable or incompatible")
+            sock.sendall(("auth " + code + "\n").encode("utf-8"))
+            if _read_line(sock) != "OK auth":
+                raise RemoteError("SwitchU authentication failed")
+            sock.sendall(b"capture\n")
+            header = _read_line(sock)
+            if header.startswith("ERR "):
+                raise RemoteError(header[4:])
+            match = re.fullmatch(r"OK capture bytes=([1-9]\d*) width=1280 height=720 format=jpeg", header)
+            if not match:
+                raise RemoteError("invalid SwitchU capture header")
+            size = int(match[1])
+            if not 4 <= size <= 0x80000:
+                raise RemoteError("SwitchU capture size is out of bounds")
+            deadline = time.monotonic() + timeout
+            data = bytearray()
+            while len(data) < size:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RemoteError("SwitchU capture payload timed out")
+                sock.settimeout(remaining)
+                chunk = sock.recv(min(65536, size - len(data)))
+                if not chunk:
+                    raise RemoteError("SwitchU capture payload is incomplete")
+                data.extend(chunk)
+            if data[:2] != b"\xff\xd8" or data[-2:] != b"\xff\xd9":
+                raise RemoteError("SwitchU capture is not a complete JPEG")
+            return bytes(data)
+    except (OSError, ConnectionError, TimeoutError) as exc:
+        raise RemoteError("cannot capture SwitchU screen: %s" % exc) from exc
+
+
 def request_id(reply: str) -> int | None:
     queued = re.fullmatch(r"OK queued ([1-9]\d*)", reply)
     if queued:

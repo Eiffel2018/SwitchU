@@ -46,6 +46,8 @@ Command parseCommand(std::string_view line) {
     }
     if (equalAsciiCaseInsensitive(line, "status"))
         return {CommandKind::Status, {}};
+    if (line == "capture")
+        return {CommandKind::Capture, {}};
     for (const char* action : {"on", "off", "status"}) {
         if (line == std::string("controller ") + action)
             return {CommandKind::Controller, action};

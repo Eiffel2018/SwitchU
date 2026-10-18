@@ -6,6 +6,8 @@
 using namespace switchu::daemon::remote;
 
 int main() {
+    assert(parseCommand("capture").kind == CommandKind::Capture);
+    assert(parseCommand("capture extra").kind == CommandKind::Invalid);
     assert(parseCommand("controller off").kind == CommandKind::Controller);
     assert(parseCommand("controller on").argument == "on");
     assert(parseCommand("controller status").argument == "status");

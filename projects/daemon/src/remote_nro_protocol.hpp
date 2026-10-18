@@ -19,6 +19,7 @@ enum class CommandKind {
     Press,
     Stick,
     Controller,
+    Capture,
 };
 
 struct Command {
