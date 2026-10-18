@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <array>
 
 namespace switchu::daemon::remote {
 namespace {
@@ -45,6 +46,31 @@ Command parseCommand(std::string_view line) {
     }
     if (equalAsciiCaseInsensitive(line, "status"))
         return {CommandKind::Status, {}};
+    constexpr std::string_view stickPrefix = "stick ";
+    if (line.substr(0, stickPrefix.size()) == stickPrefix) {
+        auto args = line.substr(stickPrefix.size());
+        std::array<std::string_view, 4> fields{};
+        for (std::size_t i = 0; i < fields.size(); ++i) {
+            const auto end = args.find(' ');
+            if ((i + 1 == fields.size()) != (end == std::string_view::npos))
+                return {};
+            fields[i] = args.substr(0, end);
+            if (end != std::string_view::npos)
+                args.remove_prefix(end + 1);
+        }
+        if (fields[0] != "L" && fields[0] != "R")
+            return {};
+        std::int32_t x = 0, y = 0;
+        std::uint32_t ms = 0;
+        const auto integer = [](std::string_view text, auto& value) {
+            const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+            return parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size();
+        };
+        if (!integer(fields[1], x) || !integer(fields[2], y) || !integer(fields[3], ms)
+            || x < -32768 || x > 32767 || y < -32768 || y > 32767 || ms == 0 || ms > 1000)
+            return {};
+        return {CommandKind::Stick, std::string(fields[0]), ms, 0, x, y};
+    }
     constexpr std::string_view pressPrefix = "press ";
     if (line.substr(0, pressPrefix.size()) == pressPrefix) {
         const auto args = line.substr(pressPrefix.size());
@@ -64,6 +90,8 @@ Command parseCommand(std::string_view line) {
             if (key == keys[i])
                 return {CommandKind::Press, std::string(key), ms, 1ULL << i};
         }
+        if (key == "HOME")
+            return {CommandKind::Press, "HOME", ms, 1ULL << 18};
         return {};
     }
     if (line.size() > launchPrefix.size()

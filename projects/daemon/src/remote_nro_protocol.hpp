@@ -17,6 +17,7 @@ enum class CommandKind {
     Status,
     Launch,
     Press,
+    Stick,
 };
 
 struct Command {
@@ -24,6 +25,8 @@ struct Command {
     std::string argument;
     std::uint32_t holdMs = 0;
     std::uint64_t buttonMask = 0;
+    std::int32_t stickX = 0;
+    std::int32_t stickY = 0;
 };
 
 // Parses one protocol line (without its terminating CR/LF). Launch paths keep

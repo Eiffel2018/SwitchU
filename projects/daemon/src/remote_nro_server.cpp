@@ -355,7 +355,7 @@ const char* serveClient(int fd) {
             // Runs on the dedicated server worker, independent of the NRO.
             // The bounded call releases our own virtual controller before replying.
             const Result rc = switchu::remote_input::pressButton(
-                static_cast<HidNpadButton>(command.buttonMask), command.holdMs);
+                command.buttonMask, command.holdMs);
             char response[96];
             const int count = R_SUCCEEDED(rc)
                 ? std::snprintf(response, sizeof(response), "OK pressed %s ms=%u\n",
@@ -364,6 +364,17 @@ const char* serveClient(int fd) {
             diagnostic(R_SUCCEEDED(rc) ? "input-released" : "input-failed", fd, 0, rc);
             if (count <= 0 || !sendAll(fd, std::string_view(response, count), "input-response"))
                 return "input-response-failed";
+        } else if (command.kind == CommandKind::Stick) {
+            const Result rc = switchu::remote_input::moveStick(command.argument == "R",
+                command.stickX, command.stickY, command.holdMs);
+            char response[112];
+            const int count = R_SUCCEEDED(rc)
+                ? std::snprintf(response, sizeof(response), "OK stick %s x=%d y=%d ms=%u\n",
+                    command.argument.c_str(), command.stickX, command.stickY, command.holdMs)
+                : std::snprintf(response, sizeof(response), "ERR input rc=0x%08X\n", rc);
+            diagnostic(R_SUCCEEDED(rc) ? "stick-centered" : "stick-failed", fd, 0, rc);
+            if (count <= 0 || !sendAll(fd, std::string_view(response, count), "stick-response"))
+                return "stick-response-failed";
         } else if (command.kind == CommandKind::InvalidPath) {
             answerError(fd, "invalid-path");
         } else {
@@ -515,7 +526,7 @@ bool start(void (*wake)()) {
         }
         g_started = true;
     }
-    diagnostic("remote channel v2");
+    diagnostic(kRemoteChannelVersionMarker);
     switchu::FileLog::log("[remote-nro] service thread started");
     return true;
 }

@@ -9,7 +9,8 @@ namespace {
 constexpr u32 kMaxHoldMs = 1000;
 constexpr size_t kWorkBufferAlignment = 0x1000;
 constexpr size_t kWorkBufferSize = 0x1000;
-constexpr u64 kAllowedButtons = 0xFFFFULL; // A/B/X/Y, sticks, shoulders, +/- and D-pad.
+constexpr u64 kAllowedButtons = 0xFFFFULL | HiddbgNpadButton_Home;
+static_assert(HiddbgNpadButton_Home == (1ULL << 18));
 
 std::mutex g_mutex;
 bool g_initialized = false;
@@ -19,8 +20,7 @@ HiddbgHdlsSessionId g_session{};
 HiddbgHdlsHandle g_handle{};
 void* g_workBuffer = nullptr;
 
-bool isOneAllowedButton(HidNpadButton button) {
-    const u64 mask = static_cast<u64>(button);
+bool isOneAllowedButton(u64 mask) {
     return mask != 0 && (mask & ~kAllowedButtons) == 0 && (mask & (mask - 1)) == 0;
 }
 
@@ -83,18 +83,12 @@ Result initializeController() {
     return 0;
 }
 
-} // namespace
-
-Result pressButton(HidNpadButton button, u32 holdMs) {
-    if (!isOneAllowedButton(button) || holdMs == 0 || holdMs > kMaxHoldMs)
-        return MAKERESULT(Module_Libnx, LibnxError_BadInput);
-
+Result applyStateFor(const HiddbgHdlsState& pressed, u32 holdMs) {
     std::lock_guard<std::mutex> lock(g_mutex);
     Result result = initializeController();
     if (R_FAILED(result))
         return result;
 
-    const HiddbgHdlsState pressed = makeState(static_cast<u64>(button));
     result = hiddbgSetHdlsState(g_handle, &pressed);
     if (R_SUCCEEDED(result)) {
         svcSleepThread(static_cast<u64>(holdMs) * 1'000'000ULL);
@@ -108,6 +102,25 @@ Result pressButton(HidNpadButton button, u32 holdMs) {
         hiddbgSetHdlsState(g_handle, &released);
     }
     return result;
+}
+
+} // namespace
+
+Result pressButton(u64 button, u32 holdMs) {
+    if (!isOneAllowedButton(button) || holdMs == 0 || holdMs > kMaxHoldMs)
+        return MAKERESULT(Module_Libnx, LibnxError_BadInput);
+    return applyStateFor(makeState(button), holdMs);
+}
+
+Result moveStick(bool right, s32 x, s32 y, u32 holdMs) {
+    if (x < -32768 || x > 32767 || y < -32768 || y > 32767
+        || holdMs == 0 || holdMs > kMaxHoldMs)
+        return MAKERESULT(Module_Libnx, LibnxError_BadInput);
+    HiddbgHdlsState state = makeState(0);
+    auto& stick = right ? state.analog_stick_r : state.analog_stick_l;
+    stick.x = x;
+    stick.y = y;
+    return applyStateFor(state, holdMs);
 }
 
 Result shutdown() {

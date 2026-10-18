@@ -12,9 +12,21 @@ int main() {
         assert(key.holdMs == 100 && key.buttonMask == (1ULL << 10));
         assert(parseCommand("press LEFT 1").buttonMask == (1ULL << 12));
         assert(parseCommand("press DOWN 1000").buttonMask == (1ULL << 15));
+        assert(parseCommand("press HOME 100").buttonMask == (1ULL << 18));
         for (const char* bad : {"press A 0", "press A 1001", "press A -1",
              "press A 999999999999999999999", "press A 100x", "press A 100 extra",
-             "press A ", "press HOME 100", "press A+B 100", "press a 100"})
+             "press A ", "press CAPTURE 100", "press A+B 100", "press a 100"})
+            assert(parseCommand(bad).kind == CommandKind::Invalid);
+    }
+    {
+        const auto stick = parseCommand("stick R -32768 32767 100");
+        assert(stick.kind == CommandKind::Stick && stick.argument == "R");
+        assert(stick.stickX == -32768 && stick.stickY == 32767 && stick.holdMs == 100);
+        assert(parseCommand("stick L 0 0 1").kind == CommandKind::Stick);
+        for (const char* bad : {"stick R 32768 0 100", "stick L 0 -32769 100",
+             "stick R 0 0 0", "stick L 0 0 1001", "stick R 1 2 3 extra",
+             "stick L 0 0", "stick r 0 0 100", "stick R 0.5 0 100",
+             "stick R 99999999999999 0 100", "stick R 0  0 100"})
             assert(parseCommand(bad).kind == CommandKind::Invalid);
     }
     {
