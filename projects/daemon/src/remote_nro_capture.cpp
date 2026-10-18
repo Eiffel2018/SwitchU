@@ -41,7 +41,7 @@ Result captureJpeg(void** outBuffer, size_t* outSize) {
 
     u64 jpegSize = 0;
     rc = capsscCaptureJpegScreenShot(&jpegSize, buffer, kJpegBufferSize,
-                                     ViLayerStack_Default, kCaptureTimeoutNs);
+                                     ViLayerStack_Lcd, kCaptureTimeoutNs);
     capsscExit();
     if (R_FAILED(rc)) {
         std::free(buffer);

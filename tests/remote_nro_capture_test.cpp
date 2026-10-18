@@ -46,7 +46,7 @@ bool successCapturesAndReleasesService() {
         && check(output != nullptr && size == reportedSize, "JPEG buffer and size are returned")
         && check((reinterpret_cast<std::uintptr_t>(captureBuffer) & 0xFFF) == 0, "buffer is page aligned")
         && check(captureBufferSize == CAPSSC_JPEG_BUFFER_SIZE, "capture uses the documented maximum buffer")
-        && check(captureStack == ViLayerStack_Default && captureTimeout == 250'000'000, "default layer stack and bounded timeout are used")
+        && check(captureStack == ViLayerStack_Lcd && captureTimeout == 250'000'000, "physical display layer stack and bounded timeout are used")
         && check(events == std::vector<std::string>{"init", "capture", "exit"}, "service is closed after every successful request");
     std::free(output);
     return ok;

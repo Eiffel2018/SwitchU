@@ -12,6 +12,7 @@ constexpr Result Module_Libnx = 345;
 constexpr Result LibnxError_OutOfMemory = 2;
 constexpr Result LibnxError_BadInput = 10;
 constexpr ViLayerStack ViLayerStack_Default = 0;
+constexpr ViLayerStack ViLayerStack_Lcd = 1;
 constexpr std::size_t CAPSSC_JPEG_BUFFER_SIZE = 0x80000;
 #define MAKERESULT(module, description) (static_cast<Result>((module) | ((description) << 9)))
 #define R_SUCCEEDED(result) ((result) == 0)
