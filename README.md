@@ -84,8 +84,10 @@ input delivery depends on the virtual controller/style supported by the
 target and is not hardware-verified.
 The 26 controller operations always use 6802 without an extra 6801 availability
 check. Breeze's existing Game input, Show/Hide and other functions retain 6801.
-Show/Hide changes the overlay while the game keeps running; HOME switches
-foreground between the game and NRO with the corresponding pause/resume.
+Show/Hide changes the overlay; whether the game pauses follows Breeze's
+existing `Overlay pauses game` setting. HOME follows the selected HOME mode:
+No restart switches foreground between the game and retained NRO, while
+Overlay toggles the overlay.
 
 Transport **v5** adds authenticated `capture`: a JPEG of the current console
 display, including other NROs while Breeze is closed. Its reply is
@@ -106,6 +108,13 @@ operation now neutralizes input, detaches its virtual device, releases its HDLS
 work buffer and closes its HID debug service, including failure cleanup. It
 does not retain a virtual controller between clicks. The UI stops its existing
 Breeze Game input connection before enabling SwitchU controls.
+Before a pulse, the daemon publishes neutral and allows 1.25 seconds for device
+discovery. After the requested hold it publishes neutral for another 100 ms
+before detaching. A 100 ms press therefore takes about 1.45 seconds plus
+transport overhead. The extra time does not lengthen the pressed state.
+Remote NRO replacement also synchronizes the confirmed game foreground with
+the daemon's application state, so the replacement's first HOME resumes the
+game in No restart mode.
 Authenticated `controller off` blocks further SwitchU button/axis input and
 cleans up the daemon's controller; `controller on` explicitly enables it again,
 and `controller status` reports the gate. OFF does not remove controllers

@@ -18,7 +18,8 @@ COMPANIONS = ('pcconnect.py', 'pcconnect_album.py', 'pcconnect_asm.py',
 
 def package(output):
     output.mkdir(parents=True, exist_ok=True)
-    common = {'README.md': PC / 'README.md', 'LICENSE': ROOT / 'LICENSE'}
+    common = {'README.md': PC / 'README.md', 'LICENSE': ROOT / 'LICENSE',
+              'REMOTE_CONTROL_ACCEPTANCE.md': PC / 'REMOTE_CONTROL_ACCEPTANCE.md'}
     full = dict(UPDATES, **{name: PC / name for name in COMPANIONS})
     for name, sources in (('BreezePC.zip', full), ('BreezePC-update.zip', UPDATES)):
         path = output / name
