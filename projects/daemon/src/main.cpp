@@ -1976,7 +1976,7 @@ static bool restoreBreezeAfterLaunch() {
         return false;
     // An explicit HOME/menu/action, a replacement launch or an exited game
     // takes priority. Never reopen Breeze against a later application session.
-    if (!daemon::app::isRunning() || g_launchRequestPending ||
+    if (!daemon::app::isRunning() || g_launchRequestPending || g_pendingHomeMenuLaunch ||
         daemon::menu_la::hasHolder() || g_foregroundAppletActive ||
         !g_actionQueue.empty() || !breezeCanStart()) {
         g_breezeLaunchHandoff.cancel();
