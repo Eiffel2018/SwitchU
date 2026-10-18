@@ -101,7 +101,9 @@ gesture to finish and allows 10 seconds for its reply. A 5-second hold followed
 by OFF has passed a real UI/console test. Touch creates no virtual gamepad.
 
 Touch gestures and all 26 original controls passed console regression checks.
-In the tested Breeze build, injected touch selects and A confirms; a double
-gesture on hbmenu's Breeze tile launched Breeze without A. Applications may
+In the tested Breeze beta125.05 build, a first tap selects an unselected
+button and a second tap opens it; an already selected button opens on one tap.
+Both paths passed raw 6802 touch without A. A double gesture on hbmenu's
+Breeze tile also launched Breeze without A. Applications may
 interpret the same raw touch differently; no extra A or 6801 button command
 is inserted into a gesture. No acquire/release lease was added.

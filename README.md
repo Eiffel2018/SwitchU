@@ -125,7 +125,9 @@ is off by default; the original Breeze menu/keyboard clicks remain available.
 Touch delivery, actual PC gestures, OFF during a 5-second hold, and the
 existing 26 controls have passed console checks; see the companion's
 [acceptance record](tools/breezepc/REMOTE_CONTROL_ACCEPTANCE.md).
-On the tested Breeze build, injected touch selects a menu item; A confirms it.
+On the tested Breeze beta125.05 build, the first tap selects an unselected
+button and the next tap opens it; an already selected button opens on one tap.
+Both paths were verified with raw 6802 touch and no A command.
 In hbmenu, a double gesture on the Breeze tile launched that NRO without A.
 Gestures are raw touch input, not an implicit button-ID RPC or appended A.
 OFF waits for a bounded gesture to finish; the PC OFF request allows 10 seconds.

@@ -42,7 +42,7 @@ Installed daemon: `f7a802a`, built by [native CI 39139602085](https://github.com
 | Actual PC coordinate controls and preview gestures | Pass; real Tk callbacks and actual console requests for tap/double/long, including single/double coalescing and hold/release |
 | OFF during a 5000 ms long press | Pass; UI waited about 5.08 seconds, received disabled, and Probe reported zero contacts. PC OFF timeout is 10 seconds |
 | Real NRO action | A double gesture on hbmenu's Breeze tile launched Breeze with no A command |
-| Breeze interaction | Injected touch selected Settings; a separate 6802 A confirmed it and opened Settings. No implicit A or button-ID RPC is added to raw touch |
+| Breeze interaction | Pass with raw 6802 touch only: first tap selected Save, second opened Main; already selected Settings opened on one tap, and Save returned to Main. No A or button RPC |
 | Existing 26 controls | All 24 ordinary controls observed/released; HOME showed game then the same Probe; Capture album JPEG read back and visually confirmed |
 | Cleanup | SwitchU input OFF, no touch/virtual device retained, Breeze gamepad detached, no stopped debugger/BPs, all owned client/UI workers closed |
 | Python and native checks | 36 protocol/helper plus 12 PC exclusion/capture tests passed; native gesture timing/cleanup fault tests, original input and protocol tests passed |
@@ -50,3 +50,5 @@ Installed daemon: `f7a802a`, built by [native CI 39139602085](https://github.com
 Final receipts: `dist/breezepc-touch-final-f7a802a/` (`touch-api-live-calibrated.json`, `touch-ui-live.json`, `touch-off-long-live.json`, `hbmenu-double-launch.json`, `touch-breeze-confirm.json`, `ui26-acceptance.json`, `final-cleanup.json`, `sd-install-receipt.json`, `post-reboot.json`). Earlier cohorts remain separately preserved. The Start/End attribute experiment did not propagate those flags on this HOS and was reverted; it is not part of the installed daemon or accepted timing result.
 
 Touch uses `hiddbgSetTouchScreenAutoPilotState` with explicit zero contacts and unset afterward, not HDLS gamepad allocation. It temporarily overrides touch input during the bounded gesture. It is single-finger input; multi-touch, drag, persistent touch sessions and acquire/release leases are outside this extension. A long gesture serializes the 6802 worker, so callers should await its reply before capture/status and budget timeout for its duration. These checks prove the observed raw input and named application responses, not identical gesture handling in every NRO.
+
+In Breeze beta125.05, an unselected button is highlighted on the first tap and activated on the next; an already selected button activates on one tap. Both paths passed without an A command (`touch-breeze-followup.json`). Other NROs may interpret touch differently.
