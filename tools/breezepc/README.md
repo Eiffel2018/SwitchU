@@ -80,7 +80,7 @@ The complete protocol/acceptance scope is recorded in
 [REMOTE_CONTROL_ACCEPTANCE.md](REMOTE_CONTROL_ACCEPTANCE.md), also included
 in both downloadable packages.
 
-## Touch extension (hardware acceptance pending)
+## Touch extension
 
 SwitchU controls now include X/Y coordinates (1280×720), tap/double/long mode,
 hold milliseconds, double-tap gap and **Send Touch**. The tested console
@@ -96,5 +96,12 @@ Tap holds: 1–300 ms. Double: two tap holds with a 50–500 ms lifted gap.
 Long: 300–5000 ms (default 800). The helper adjusts timeout to the hold length.
 Each gesture releases touch autopilot without attaching a virtual gamepad.
 `controller off` covers touch cleanup as well. This is single-finger input,
-not multi-touch or a client-held touch session. The tested 26-button build
-remains separate until touch acceptance passes.
+not multi-touch or a client-held touch session. OFF waits for the bounded
+gesture to finish and allows 10 seconds for its reply. A 5-second hold followed
+by OFF has passed a real UI/console test. Touch creates no virtual gamepad.
+
+Touch gestures and all 26 original controls passed console regression checks.
+In the tested Breeze build, injected touch selects and A confirms; a double
+gesture on hbmenu's Breeze tile launched Breeze without A. Applications may
+interpret the same raw touch differently; no extra A or 6801 button command
+is inserted into a gesture. No acquire/release lease was added.

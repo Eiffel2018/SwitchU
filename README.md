@@ -122,7 +122,15 @@ or enable **Touch preview via 6802**: click, double-click, or hold and release
 on the picture. Letterboxing and drag gestures are excluded. The first click
 is delayed 550 ms to coalesce a double-click into one request. Touch preview
 is off by default; the original Breeze menu/keyboard clicks remain available.
-This extension is pending hardware acceptance on the touch development branch.
+Touch delivery, actual PC gestures, OFF during a 5-second hold, and the
+existing 26 controls have passed console checks; see the companion's
+[acceptance record](tools/breezepc/REMOTE_CONTROL_ACCEPTANCE.md).
+On the tested Breeze build, injected touch selects a menu item; A confirms it.
+In hbmenu, a double gesture on the Breeze tile launched that NRO without A.
+Gestures are raw touch input, not an implicit button-ID RPC or appended A.
+OFF waits for a bounded gesture to finish; the PC OFF request allows 10 seconds.
+Input ownership still uses the existing task handoff; no acquire/release lease
+API, multi-touch or drag session was added.
 
 The controller is shared by the daemon's serialized input worker. Each bounded
 operation now neutralizes input, detaches its virtual device, releases its HDLS
