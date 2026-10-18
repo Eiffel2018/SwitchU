@@ -50,3 +50,8 @@ controller until the daemon exits; it must be replaced before coexistence testin
 The original NRO/button protocol was tested with daemon `d810bfa`. A loader
 `started` response is not an NRO-readiness check; uncertain input is never
 automatically replayed. No sys-botbase module is required.
+
+The controller fixes remain a development build pending physical acceptance.
+Upstream PR #1 is closed. Reopening or submitting a PR requires successful
+NRO launch with Breeze closed, HOME, all 26 UI operations, controller cleanup,
+emergency OFF, physical-controller reconnection and reboot recovery checks.
