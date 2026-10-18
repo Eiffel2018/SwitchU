@@ -91,6 +91,20 @@ def validate_sd_path(path: str) -> str:
     return path
 
 
+def validate_touch(gesture, x, y, duration_ms, gap_ms=120):
+    if gesture not in ("tap", "double", "long"):
+        raise ValueError("touch gesture must be tap, double or long")
+    if any(type(v) is not int for v in (x, y, duration_ms, gap_ms)):
+        raise ValueError("touch coordinates and timing must be integers")
+    if not 0 <= x < 1280 or not 0 <= y < 720:
+        raise ValueError("touch coordinates must be x=0..1279, y=0..719")
+    if not (300 <= duration_ms <= 5000 if gesture == "long" else 1 <= duration_ms <= 300):
+        raise ValueError("touch hold must be 300..5000 ms for long, 1..300 ms for tap/double")
+    if gesture == "double" and not 50 <= gap_ms <= 500:
+        raise ValueError("double tap gap must be 50..500 ms")
+    return gesture, x, y, duration_ms, gap_ms if gesture == "double" else 0
+
+
 def _read_line(sock: socket.socket, limit: int = 4096, *, deadline=None) -> str:
     data = bytearray()
     while len(data) < limit:
@@ -117,11 +131,12 @@ def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
     if not code or "\n" in code or "\r" in code:
         raise ValueError("PC connect code is empty or invalid")
     if (command not in ("status", "controller status", "controller on", "controller off")
-            and not command.startswith(("launch ", "press ", "stick "))):
+            and not command.startswith(("launch ", "press ", "stick ", "touch "))):
         raise ValueError("unsupported SwitchU command")
     path = None
     input_press = None
     input_stick = None
+    input_touch = None
     controller_action = command if command in ("controller on", "controller off") else None
     if command.startswith("launch "):
         path = validate_sd_path(command[len("launch "):])
@@ -139,6 +154,15 @@ def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
         parsed = [int(value) if re.fullmatch(r"-?\d+", value) else value for value in fields[2:]]
         input_stick = validate_stick(fields[1], *parsed)
         command = "stick %s %d %d %d" % input_stick
+    elif command.startswith("touch "):
+        fields = command.split()
+        if len(fields) not in (5, 6) or ((fields[1] == "double") != (len(fields) == 6)):
+            raise ValueError("touch requires gesture, x, y, hold and (double only) gap")
+        numbers = [int(v) if re.fullmatch(r"-?\d+", v) else v for v in fields[2:]]
+        input_touch = validate_touch(fields[1], *numbers)
+        gesture, x, y, ms, gap = input_touch
+        command = "touch %s %d %d %d" % (gesture, x, y, ms)
+        if gesture == "double": command += " %d" % gap
 
     sent_launch = False
     sent_input = False
@@ -156,7 +180,7 @@ def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
                     raise RemoteError(auth[4:])
                 raise RemoteError("SwitchU authentication failed")
             sent_launch = path is not None
-            sent_input = input_press is not None or input_stick is not None
+            sent_input = input_press is not None or input_stick is not None or input_touch is not None
             sent_controller = controller_action is not None
             sock.sendall((command + "\n").encode("utf-8"))
             reply = _read_line(sock)
@@ -189,6 +213,7 @@ def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
         raise RemoteError(reply[4:])
     expected = ("OK pressed %s ms=%d" % input_press if input_press is not None
                 else "OK stick %s x=%d y=%d ms=%d" % input_stick if input_stick is not None
+                else "OK touch %s x=%d y=%d ms=%d gap=%d" % input_touch if input_touch is not None
                 else "OK controller enabled" if command == "controller on"
                 else "OK controller disabled" if command == "controller off"
                 else "OK controller " if command == "controller status"
@@ -255,6 +280,19 @@ def controller(host: str, code: str, enabled: bool | None = None, *,
         command = "controller on" if enabled else "controller off"
     else:
         raise ValueError("controller enabled must be True, False, or None for status")
+    return request(host, code, command, port=port, timeout=timeout)
+
+
+def touch(host: str, code: str, x: int, y: int, *, gesture: str = "tap",
+          duration_ms: int | None = None, gap_ms: int = 120,
+          port: int = DEFAULT_PORT, timeout: float | None = None) -> str:
+    """One bounded touch gesture; unknown results are never replayed."""
+    if duration_ms is None: duration_ms = 800 if gesture == "long" else 100
+    gesture, x, y, duration_ms, gap = validate_touch(gesture, x, y, duration_ms, gap_ms)
+    command = "touch %s %d %d %d" % (gesture, x, y, duration_ms)
+    if gesture == "double": command += " %d" % gap
+    if timeout is None:
+        timeout = max(3.0, (duration_ms * (2 if gesture == "double" else 1) + gap) / 1000 + 2.0)
     return request(host, code, command, port=port, timeout=timeout)
 
 

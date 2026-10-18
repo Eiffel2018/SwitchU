@@ -708,6 +708,14 @@ class App:
         self.switchu_controller_btn = tk.Button(bar, text="SwitchU controls", command=self.open_switchu_controller)
         self.switchu_controller_btn.pack(side="left")
         self.switchu_controller = None
+        self.switchu_touch_preview = tk.BooleanVar(value=False)
+        self.switchu_touch_gesture = tk.StringVar(value="tap")
+        self.switchu_touch_x = tk.StringVar(value="640")
+        self.switchu_touch_y = tk.StringVar(value="360")
+        self.switchu_touch_ms = tk.StringVar(value="100")
+        self.switchu_touch_gap = tk.StringVar(value="120")
+        self.switchu_touch_after = None
+        self.switchu_touch_down = None
         self.switchu_input_buttons = []
         tk.Label(bar, text=" Keys:").pack(side="left")
         self.chord = tk.Entry(bar, width=14)
@@ -800,6 +808,7 @@ class App:
         self.canvas.bind("<Configure>", self.on_resize)
         self.canvas.bind("<Button-1>", self.on_click)
         self.canvas.bind("<Double-Button-1>", self.on_double)
+        self.canvas.bind("<ButtonRelease-1>", self.on_touch_release)
         self.canvas.bind("<MouseWheel>", self.on_wheel)
 
         self.out = queue.Queue()
@@ -1068,6 +1077,7 @@ class App:
         return self.text is not None and self.text.alive()
 
     def on_close(self):
+        self._cancel_touch_preview()
         self.switchu_generation += 1
         self.stop_record()
         self.screen_capture.stop()
@@ -1159,7 +1169,7 @@ class App:
         win = tk.Toplevel(self.root)
         win.title("SwitchU Controller")
         win.resizable(False, False)
-        win.geometry("800x710")
+        win.geometry("800x800")
         self.switchu_controller = win
         self.switchu_input_buttons = []
         self.switchu_input_canvases = []
@@ -1171,6 +1181,26 @@ class App:
         self.switchu_resume_btn = tk.Button(command_bar, text="Resume input",
                                             command=self.resume_switchu_controller)
         self.switchu_resume_btn.pack(side="left", padx=3)
+        touch_bar = tk.Frame(win)
+        touch_bar.pack(fill="x", padx=12, pady=4)
+        tk.Checkbutton(touch_bar, text="Touch preview via 6802",
+                       variable=self.switchu_touch_preview,
+                       command=self._cancel_touch_preview).pack(side="left")
+        tk.OptionMenu(touch_bar, self.switchu_touch_gesture, "tap", "double", "long",
+                      command=lambda value: self.switchu_touch_ms.set("800" if value == "long" else "100")).pack(side="left")
+        for label, variable, maximum in (("X", self.switchu_touch_x, 1279),
+                                         ("Y", self.switchu_touch_y, 719),
+                                         ("Hold ms", self.switchu_touch_ms, 5000),
+                                         ("Gap ms", self.switchu_touch_gap, 500)):
+            tk.Label(touch_bar, text=label).pack(side="left")
+            tk.Spinbox(touch_bar, from_=0, to=maximum, width=5,
+                       textvariable=variable).pack(side="left")
+        self.switchu_touch_send_btn = tk.Button(touch_bar, text="Send Touch",
+                                                command=self.send_switchu_touch)
+        self.switchu_touch_send_btn.pack(side="left", padx=3)
+        self.switchu_input_buttons.append(self.switchu_touch_send_btn)
+        tk.Label(win, text="1280×720 coordinates. Preview: click, double-click, or hold then release. "
+                 "Touch is sent once; drag is not supported.").pack(anchor="w", padx=12)
         canvas = tk.Canvas(win, width=780, height=670, bg="#f5f7fa", highlightthickness=0)
         canvas.pack(padx=10, pady=8)
         self.switchu_controller_canvas = canvas
@@ -1248,6 +1278,7 @@ class App:
                          args=(generation, host, code, enabled), daemon=True).start()
 
     def stop_switchu_controller(self):
+        self._cancel_touch_preview()
         if self.switchu_controller_command_pending:
             self.status.config(text="SwitchU controller state request is still pending.")
             return
@@ -1317,6 +1348,8 @@ class App:
         return pad
 
     def close_switchu_controller(self):
+        self._cancel_touch_preview()
+        self.switchu_touch_preview.set(False)
         if self.switchu_controller is not None:
             self.switchu_controller.destroy()
             self.switchu_controller = None
@@ -1358,6 +1391,83 @@ class App:
         self.status.config(text="Sending one %s stick pulse (x=%d, y=%d, 100 ms)..." % (side, x, y))
         threading.Thread(target=self._switchu_stick_worker,
                          args=(generation, host, code, side, x, y), daemon=True).start()
+
+    def _cancel_touch_preview(self):
+        pending = getattr(self, "switchu_touch_after", None)
+        if pending is not None:
+            self.root.after_cancel(pending)
+        self.switchu_touch_after = None
+        self.switchu_touch_down = None
+
+    def send_switchu_touch(self, x=None, y=None, gesture=None, duration_ms=None):
+        if (self.switchu_controller_state != "enabled" or self.switchu_controller_command_pending
+                or self.switchu_busy or self.switchu_waiting_for_pad or not self._switchu_pad_ready()):
+            self.status.config(text="Touch blocked: enable SwitchU input after Breeze Game input has stopped.")
+            return
+        try:
+            x = int(self.switchu_touch_x.get()) if x is None else x
+            y = int(self.switchu_touch_y.get()) if y is None else y
+            gesture = gesture or self.switchu_touch_gesture.get()
+            ms = int(self.switchu_touch_ms.get()) if duration_ms is None else duration_ms
+            gap = int(self.switchu_touch_gap.get())
+            switchu_remote.validate_touch(gesture, x, y, ms, gap)
+        except (ValueError, TypeError) as exc:
+            self.status.config(text="Invalid touch: %s" % exc)
+            return
+        self.switchu_touch_x.set(str(x)); self.switchu_touch_y.set(str(y))
+        self.switchu_busy = True
+        self._set_switchu_buttons()
+        self.status.config(text="Sending one %s touch at (%d, %d)..." % (gesture, x, y))
+        threading.Thread(target=self._switchu_touch_worker,
+                         args=(self.switchu_generation, self.cfg["host"], self.cfg["code"],
+                               x, y, gesture, ms, gap), daemon=True).start()
+
+    def _switchu_touch_worker(self, generation, host, code, x, y, gesture, ms, gap):
+        try:
+            switchu_remote.touch(host, code, x, y, gesture=gesture, duration_ms=ms, gap_ms=gap)
+            message = "SwitchU accepted %s at (%d, %d); touch was released." % (gesture, x, y)
+        except switchu_remote.AmbiguousInputError as exc:
+            message = "Touch result unknown: %s. It was not resent." % exc
+        except (switchu_remote.RemoteError, ValueError) as exc:
+            message = "SwitchU touch failed: %s" % exc
+        self.out.put(("switchu_remote", generation, True, message))
+
+    def _touch_preview_enabled(self):
+        variable = getattr(self, "switchu_touch_preview", None)
+        return variable is not None and variable.get()
+
+    def _touch_down_preview(self, e, double=False):
+        self._cancel_touch_preview()
+        # The picture is anchored at (0,0); do not turn clicks in letterboxing
+        # into touches at the far edge of the console screen.
+        if not (0 <= e.x < self.view_w and 0 <= e.y < self.view_h):
+            return
+        x, y = self.to_screen(e.x, e.y)
+        self.switchu_touch_down = (int(x), int(y), time.monotonic(), double)
+
+    def on_touch_release(self, e):
+        if not self._touch_preview_enabled() or self.switchu_touch_down is None:
+            return
+        x, y, began, double = self.switchu_touch_down
+        self.switchu_touch_down = None
+        elapsed = int((time.monotonic() - began) * 1000)
+        end_x, end_y = self.to_screen(e.x, e.y)
+        if abs(end_x - x) > 16 or abs(end_y - y) > 16:
+            self.status.config(text="Touch drag is not supported; no gesture was sent.")
+            return
+        if double:
+            self.send_switchu_touch(x, y, "double", 100)
+        elif elapsed >= 600:
+            self.send_switchu_touch(x, y, "long", min(elapsed, 5000))
+        elif self.switchu_touch_gesture.get() != "tap":
+            self.send_switchu_touch(x, y)
+        else:
+            # Delay the first tap so a double-click becomes exactly one
+            # double-tap request, rather than a tap followed by two more taps.
+            def send_once():
+                self.switchu_touch_after = None
+                if self._touch_preview_enabled(): self.send_switchu_touch(x, y, "tap", 100)
+            self.switchu_touch_after = self.root.after(550, send_once)
 
     def _switchu_input_worker(self, generation, host, code, button):
         try:
@@ -1511,6 +1621,9 @@ class App:
 
     def on_click(self, e):
         self.canvas.focus_set()
+        if self._touch_preview_enabled():
+            self._touch_down_preview(e)
+            return
         x, y = self.to_screen(e.x, e.y)
         # Breeze's keyboard covers the menu, so a click there is a touch on
         # the keyboard; so is a click on nothing the menu reports.
@@ -1527,6 +1640,9 @@ class App:
             self.link.send("tap %d %d" % (min(int(x), SCREEN_W - 1), min(int(y), SCREEN_H - 1)))
 
     def on_double(self, e):
+        if self._touch_preview_enabled():
+            self._touch_down_preview(e, double=True)
+            return
         if self.state.get("keyboard"):
             self.on_click(e)  # each click is a key press on Breeze's keyboard
             return

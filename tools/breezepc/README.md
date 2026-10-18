@@ -79,3 +79,19 @@ picture; the independent controller remains available.
 The complete protocol/acceptance scope is recorded in
 [REMOTE_CONTROL_ACCEPTANCE.md](REMOTE_CONTROL_ACCEPTANCE.md), also included
 in both downloadable packages.
+
+## Touch extension (hardware acceptance pending)
+
+SwitchU controls now include X/Y coordinates (1280×720), tap/double/long mode,
+hold milliseconds, double-tap gap and **Send Touch**. The same explicit input
+enable/OFF gate applies. Enable **Touch preview via 6802** to click the picture,
+double-click, or hold then release. A single click waits 550 ms so a double
+click becomes one double-tap request. Clicks outside the picture and dragging
+are rejected; original Breeze mouse/menu behavior is preserved when disabled.
+
+Tap holds: 1–300 ms. Double: two tap holds with a 50–500 ms lifted gap.
+Long: 300–5000 ms (default 800). The helper adjusts timeout to the hold length.
+Each gesture releases touch autopilot without attaching a virtual gamepad.
+`controller off` covers touch cleanup as well. This is single-finger input,
+not multi-touch or a client-held touch session. The tested 26-button build
+remains separate until touch acceptance passes.
