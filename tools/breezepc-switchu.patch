@@ -1,0 +1,169 @@
+--- a/pcconnect_app.py
++++ b/pcconnect_app.py
+@@ -110,6 +110,7 @@
+ from pcconnect_album import Album  # noqa: E402
+ from pcconnect_text import TextView, plain  # noqa: E402
+ from pc_game_history import clean as clean_game_history, remember as remember_game, valid_tid  # noqa: E402
++import switchu_remote  # noqa: E402
+ 
+ CONFIG = os.path.join(os.path.expanduser("~"), ".breeze_pc.json")
+ SCREEN_W, SCREEN_H = 1280, 720
+@@ -523,6 +524,8 @@
+         self.view_w, self.view_h = 960, 540
+         self.frames, self.fps_t0 = 0, time.time()
+         self.last_reply = ""
++        self.switchu_generation = 0
++        self.switchu_busy = False
+ 
+         self.canvas = tk.Canvas(root, width=self.view_w, height=self.view_h, bg="black", highlightthickness=0)
+         self.canvas.pack(fill="both", expand=True)
+@@ -534,6 +537,12 @@
+         tk.Button(bar, text="Hide", command=lambda: self.link.send("hide")).pack(side="left")
+         tk.Button(bar, text="Reset", command=self.reset).pack(side="left")
+         tk.Button(bar, text="Connect...", command=self.on_connect).pack(side="left")
++        self.switchu_breeze_btn = tk.Button(bar, text="Open Breeze", command=self.open_switchu_breeze)
++        self.switchu_breeze_btn.pack(side="left")
++        self.switchu_nro_btn = tk.Button(bar, text="Open NRO...", command=self.open_switchu_nro)
++        self.switchu_nro_btn.pack(side="left")
++        self.switchu_status_btn = tk.Button(bar, text="SwitchU status", command=self.check_switchu_status)
++        self.switchu_status_btn.pack(side="left")
+         tk.Label(bar, text=" Keys:").pack(side="left")
+         self.chord = tk.Entry(bar, width=14)
+         self.chord.pack(side="left")
+@@ -801,6 +810,7 @@
+         return self.text is not None and self.text.alive()
+ 
+     def on_close(self):
++        self.switchu_generation += 1
+         self.stop_record()
+         if self.text_open():
+             self.text.close()
+@@ -848,6 +858,104 @@
+                                "Whatever Breeze is doing is dropped. The game and its cheats are not touched."):
+             self.link.send("restart now")
+             self.status.config(text="restarting Breeze...")
++
++    def open_switchu_breeze(self):
++        self.send_switchu_launch(switchu_remote.DEFAULT_BREEZE)
++
++    def open_switchu_nro(self):
++        path = simpledialog.askstring(
++            "Open NRO",
++            "Absolute SD NRO path (for example /hbmenu.nro or /switch/Tools/Tool.nro):",
++            initialvalue=self.cfg.get("switchu_nro_path", switchu_remote.DEFAULT_BREEZE),
++            parent=self.root,
++        )
++        if path is None:
++            return
++        try:
++            path = switchu_remote.validate_sd_path(path)
++        except ValueError as exc:
++            messagebox.showerror("Open NRO", str(exc), parent=self.root)
++            return
++        self.cfg["switchu_nro_path"] = path
++        self.save_cfg()
++        self.send_switchu_launch(path)
++
++    def check_switchu_status(self):
++        if self.switchu_busy:
++            return
++        self.switchu_busy = True
++        self._set_switchu_buttons()
++        generation = self.switchu_generation
++        self.status.config(text="Checking SwitchU remote channel...")
++        threading.Thread(target=self._switchu_status_worker,
++                         args=(generation, self.cfg["host"], self.cfg["code"]), daemon=True).start()
++
++    def send_switchu_launch(self, path):
++        if self.switchu_busy:
++            self.status.config(text="A SwitchU request is already pending; no second launch was sent.")
++            return
++        self.switchu_busy = True
++        self._set_switchu_buttons()
++        generation = self.switchu_generation
++        host, code = self.cfg["host"], self.cfg["code"]
++        self.status.config(text="Sending one launch request to SwitchU...")
++        threading.Thread(target=self._switchu_launch_worker,
++                         args=(generation, host, code, path), daemon=True).start()
++
++    def _set_switchu_buttons(self):
++        state = "disabled" if self.switchu_busy else "normal"
++        self.switchu_breeze_btn.config(state=state)
++        self.switchu_nro_btn.config(state=state)
++        self.switchu_status_btn.config(state=state)
++
++    def _switchu_launch_worker(self, generation, host, code, path):
++        try:
++            receipt = switchu_remote.launch(host, code, path, timeout=3.0)
++        except switchu_remote.AmbiguousLaunchError as exc:
++            self.out.put(("switchu_remote", generation, True,
++                          "Launch result unknown: %s. Check SwitchU status; it was not resent." % exc))
++            return
++        except (switchu_remote.RemoteError, ValueError) as exc:
++            self.out.put(("switchu_remote", generation, True, "SwitchU launch failed: %s" % exc))
++            return
++
++        number = switchu_remote.request_id(receipt)
++        if number is None:
++            self.out.put(("switchu_remote", generation, True,
++                          "SwitchU accepted the request: %s (loader state not reported)." % receipt))
++            return
++        self.out.put(("switchu_remote", generation, False,
++                      "SwitchU queued request %d for %s; checking loader status..." % (number, path)))
++        try:
++            observed = switchu_remote.wait_for_request(host, code, number, timeout=2.0,
++                                                       deadline=12.0, interval=0.75)
++            observed_id = switchu_remote.request_id(observed)
++            state = switchu_remote.status_state(observed)
++            if observed_id is not None and observed_id > number:
++                message = ("SwitchU request %d was superseded by newer request %d; it was not resent. "
++                           "Current status: %s" % (number, observed_id, observed))
++            elif state == "started":
++                message = ("SwitchU loader started request %d; the requested NRO reaching its own "
++                           "startup is not confirmed." % number)
++            elif state == "failed":
++                message = "SwitchU loader failed request %d: %s" % (number, observed)
++            elif state == "finished":
++                message = ("SwitchU loader finished request %d; the requested NRO reaching its own "
++                           "startup is not confirmed. %s" % (number, observed))
++            else:
++                message = "SwitchU queued request %d; latest daemon status: %s" % (number, observed)
++        except switchu_remote.RemoteError as exc:
++            message = ("SwitchU queued request %d; status check failed: %s. The launch was not resent." %
++                       (number, exc))
++        self.out.put(("switchu_remote", generation, True, message))
++
++    def _switchu_status_worker(self, generation, host, code):
++        try:
++            reply = switchu_remote.status(host, code, timeout=3.0)
++            message = "SwitchU: " + reply
++        except switchu_remote.RemoteError as exc:
++            message = "SwitchU status unavailable: %s" % exc
++        self.out.put(("switchu_remote", generation, True, message))
+ 
+     def set_fps(self):
+         try:
+@@ -1110,6 +1218,9 @@
+             self.game_var.set(False)
+             self.on_game_input()
+         self.cfg.update(host=host, code=code)
++        self.switchu_generation += 1
++        self.switchu_busy = False
++        self._set_switchu_buttons()
+         self.save_cfg()
+         self.root.title("Breeze PC - %s" % host)
+         self.state = {}
+@@ -1419,6 +1530,13 @@
+                         self.last_reply = ""
+                 elif item[0] == "status":
+                     self.status.config(text=item[1])
++                elif item[0] == "switchu_remote":
++                    _, generation, done, message = item
++                    if generation == self.switchu_generation:
++                        if done:
++                            self.switchu_busy = False
++                            self._set_switchu_buttons()
++                        self.status.config(text=message)
+                 elif item[0] == "pad":
+                     self.pad_info.config(text=item[1] if self.pad is not None else "")
+         except queue.Empty:

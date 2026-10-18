@@ -14,6 +14,8 @@
 #include "library_applet_runner.hpp"
 #include "menu_launcher.hpp"
 #include "system_action_queue.hpp"
+#include "remote_nro_server.hpp"
+#include "../breeze_loader/nro_launch_input.h"
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -187,6 +189,19 @@ extern "C" void __appExit(void) {
 static std::atomic<bool> g_running{true};
 static std::atomic<bool> g_powerSequenceStarted{false};
 static UEvent g_mainWakeEvent{};
+static daemon::remote::Request g_remoteNroRequest{};
+static bool g_remoteNroPending = false;
+static bool g_remoteNroForegroundRequested = false;
+static bool g_daemonForegroundKnown = true;
+static uint64_t g_remoteNroReceivedAt = 0;
+static uint64_t g_remoteNroActiveId = 0;
+static uint64_t g_remoteNroLoaderStartedAt = 0;
+static uint64_t g_remoteNroLastProbeAt = 0;
+static bool g_remoteNroAcked = false;
+static Result g_remoteNroAckResult = 0;
+static bool g_remoteNroTimedOut = false;
+static void pollRemoteNroRequests();
+static bool processRemoteNroRequest();
 static UEvent g_controlCacheWakeEvent{};
 static Event g_generalChannelEvent{};
 static bool g_generalChannelEventReady = false;
@@ -1415,6 +1430,11 @@ static bool finishBreezeApplet(const char* name) {
     if (!wasBreeze)
         return false;
 
+    // A PC replacement owns the next foreground transition. Do not reopen
+    // HOME or resume the game between closing this holder and its replacement.
+    if (g_remoteNroPending)
+        return true;
+
     if (closedForSleep) {
         // HOME after wake reopens Breeze through the profile takeover. From
         // hbmenu that isn't possible, so HOME opens the SwitchU menu instead.
@@ -2107,7 +2127,9 @@ static void handleAppletMessages() {
     switch (msg) {
         case 1:
         switchu::FileLog::log("[ae] -> ChangeIntoForeground");
-        launchPendingHomeMenu();
+        g_daemonForegroundKnown = true;
+        if (!g_remoteNroPending)
+            launchPendingHomeMenu();
         break;
 
         case 2:
@@ -2115,6 +2137,7 @@ static void handleAppletMessages() {
         // taking over. The menu no longer stays alive in a hidden suspended
         // state; only a Breeze applet held behind the game may need to make way.
         switchu::FileLog::log("[ae] -> ChangeIntoBackground");
+        g_daemonForegroundKnown = false;
         closeHeldBreezeIfGameNeedsApplet("ChangeIntoBackground");
         break;
 
@@ -2166,9 +2189,48 @@ static void handleAppletMessages() {
     }
 }
 
+static void pollRemoteNroRequests() {
+    if (!g_remoteNroPending) {
+        daemon::remote::Request request{};
+        if (!daemon::remote::take(request))
+            return;
+        if (g_powerSequenceStarted.load() || g_launchRequestPending ||
+            g_pendingHomeMenuLaunch || !g_actionQueue.empty()) {
+            daemon::remote::finish(request.id, "failed", daemon::SystemActionQueue::kBusyResult);
+            return;
+        }
+        // The transport validates syntax; reject a missing/non-NRO target
+        // before closing the user's current applet.
+        unsigned char header[0x14]{};
+        FILE* file = std::fopen(request.path.c_str(), "rb");
+        const bool valid = file && std::fread(header, 1, sizeof(header), file) == sizeof(header)
+            && std::memcmp(header + 0x10, "NRO0", 4) == 0;
+        if (file)
+            std::fclose(file);
+        if (!valid) {
+            daemon::remote::finish(request.id, "failed", MAKERESULT(Module_Libnx, LibnxError_BadInput));
+            switchu::FileLog::log("[remote-nro] rejected missing/invalid target id=%lu path=%s", request.id, request.path.c_str());
+            return;
+        }
+        cancelBreezeReturn("remote-nro");
+        g_breezeRelaunchPending = false;
+        g_remoteNroRequest = std::move(request);
+        g_remoteNroPending = true;
+        g_remoteNroForegroundRequested = false;
+        g_remoteNroReceivedAt = armGetSystemTick();
+        if (g_foregroundAppletActive || daemon::menu_la::hasHolder() ||
+            (daemon::app::isRunning() && daemon::app::hasForeground()))
+            g_daemonForegroundKnown = false;
+        switchu::FileLog::log("[remote-nro] accepted id=%lu path=%s", g_remoteNroRequest.id, g_remoteNroRequest.path.c_str());
+    }
+    if (g_foregroundAppletActive)
+        g_pendingForegroundAppletHome = true;
+}
+
 static void pumpForegroundAppletMessages() {
     handleGeneralChannel();
     handleAppletMessages();
+    pollRemoteNroRequests();
 }
 
 static void drainBreezeLaunchMessages() {
@@ -2682,6 +2744,8 @@ static void handleMenuCommand() {
 }
 
 static Result relaunchMenuAfterApplet(const char* appletName) {
+    if (g_remoteNroPending)
+        return 0;
     if (!menuInstalled() && !g_launchRequestPending) {
         // No menu to return to: the Album closing with a game suspended goes
         // back to the game, as HOME in the SwitchU menu would.
@@ -2725,6 +2789,145 @@ static Result launchBreezeInAlbum() {
     if (R_FAILED(unregisterRc))
         switchu::FileLog::log("[breeze] Album loader unregister FAIL: 0x%X", unregisterRc);
     return rc;
+}
+
+static void pumpRemoteNroApplet() {
+    // nx-hbloader deliberately has no AM proxy. A one-shot receipt keeps the
+    // target NRO's applet initialization and interactive channels untouched.
+    if (!g_remoteNroAcked && (g_remoteNroLastProbeAt == 0 ||
+        elapsedNsSince(g_remoteNroLastProbeAt) >= 250'000'000ULL)) {
+        g_remoteNroLastProbeAt = armGetSystemTick();
+        if (FILE* file = std::fopen(SWITCHU_NRO_ACK_PATH, "rb")) {
+            SwitchUNroLaunchAck ack{};
+            const bool valid = std::fread(&ack, 1, sizeof(ack), file) == sizeof(ack)
+                && std::fgetc(file) == EOF;
+            std::fclose(file);
+            if (valid && ack.magic == SWITCHU_NRO_LAUNCH_MAGIC &&
+                ack.version == SWITCHU_NRO_LAUNCH_VERSION && ack.requestId == g_remoteNroActiveId) {
+                g_remoteNroAcked = true;
+                g_remoteNroAckResult = ack.result;
+                daemon::remote::finish(g_remoteNroActiveId, ack.result ? "failed" : "started", ack.result);
+                switchu::FileLog::log("[remote-nro] loader handoff id=%lu rc=0x%X", g_remoteNroActiveId, ack.result);
+                if (ack.result)
+                    g_pendingForegroundAppletHome = true;
+            }
+        }
+    }
+    pumpBreezeAppletMessages();
+    if (!g_remoteNroAcked && elapsedNsSince(g_remoteNroLoaderStartedAt) >= 10'000'000'000ULL) {
+        g_remoteNroTimedOut = true;
+        g_pendingForegroundAppletHome = true;
+    }
+}
+
+static bool processRemoteNroRequest() {
+    if (!g_remoteNroPending)
+        return false;
+    const auto fail = [](Result rc) {
+        daemon::remote::finish(g_remoteNroRequest.id, "failed", rc);
+        switchu::FileLog::log("[remote-nro] handoff failed id=%lu rc=0x%X", g_remoteNroRequest.id, rc);
+        g_remoteNroPending = false;
+        g_remoteNroForegroundRequested = false;
+    };
+    if (g_powerSequenceStarted.load() || g_launchRequestPending) {
+        fail(daemon::SystemActionQueue::kBusyResult);
+        return true;
+    }
+    if (g_foregroundAppletActive)
+        return true;
+    if (daemon::menu_la::hasHolder()) {
+        const Result rc = daemon::menu_la::terminate(1'000'000'000ULL);
+        if (R_FAILED(rc)) {
+            fail(rc);
+            return true;
+        }
+    }
+    if (!g_daemonForegroundKnown) {
+        if (!g_remoteNroForegroundRequested) {
+            g_remoteNroForegroundRequested = true;
+            g_remoteNroReceivedAt = armGetSystemTick();
+            const Result rc = appletRequestToGetForeground();
+            if (R_FAILED(rc)) {
+                fail(rc);
+                return true;
+            }
+            if (daemon::app::isRunning() && daemon::app::hasForeground())
+                daemon::app::onHomeSuspend();
+        } else if (elapsedNsSince(g_remoteNroReceivedAt) >= 5'000'000'000ULL) {
+            fail(KERNELRESULT(TimedOut));
+        }
+        return true;
+    }
+
+    const auto request = g_remoteNroRequest;
+    SwitchUNroLaunchInput input{};
+    input.magic = SWITCHU_NRO_LAUNCH_MAGIC;
+    input.version = SWITCHU_NRO_LAUNCH_VERSION;
+    input.requestId = request.id;
+    std::snprintf(input.path, sizeof(input.path), "%s", request.path.c_str());
+    Result rc = daemon::registerExternalContent(smi::kMenuTakeoverProgramId, smi::kBreezeAlbumLoaderDir);
+    if (R_FAILED(rc)) {
+        fail(rc);
+        return true;
+    }
+    ::remove(SWITCHU_NRO_REQUEST_PATH);
+    ::remove(SWITCHU_NRO_ACK_PATH);
+    ::remove(SWITCHU_NRO_ACK_TMP_PATH);
+    bool written = false;
+    if (FILE* file = std::fopen(SWITCHU_NRO_REQUEST_PATH, "wb")) {
+        const bool complete = std::fwrite(&input, 1, sizeof(input), file) == sizeof(input);
+        const int flushed = std::fflush(file);
+        const int closed = std::fclose(file);
+        written = complete && flushed == 0 && closed == 0 && commitSdCard("remote-nro-request");
+    }
+    if (!written) {
+        ::remove(SWITCHU_NRO_REQUEST_PATH);
+        daemon::unregisterExternalContent(smi::kMenuTakeoverProgramId);
+        fail(MAKERESULT(Module_Libnx, LibnxError_BadInput));
+        return true;
+    }
+    const u8 albumArg = AlbumLaArg_ShowAllAlbumFilesForHomeMenu;
+    const daemon::LibraryAppletInput inputs[] = {{&albumArg, sizeof(albumArg)}};
+    beginBreezeCandidate(false, g_breezeUid, "remote NRO loader");
+    g_remoteNroPending = false;
+    g_remoteNroForegroundRequested = false;
+    g_remoteNroActiveId = request.id;
+    g_remoteNroAcked = false;
+    g_remoteNroAckResult = 0;
+    g_remoteNroTimedOut = false;
+    g_remoteNroLoaderStartedAt = armGetSystemTick();
+    g_remoteNroLastProbeAt = 0;
+    g_foregroundAppletActive = true;
+    g_pendingForegroundAppletHome = false;
+    g_daemonForegroundKnown = false;
+    daemon::LibraryAppletRequest launch{};
+    launch.id = AppletId_LibraryAppletPhotoViewer;
+    launch.name = "Remote NRO";
+    launch.version = 0x10000;
+    launch.inputs = inputs;
+    launch.inputCount = 1;
+    launch.activeHolder = &g_breezeHolder;
+    launch.skipForegroundRestore = breezeSkipForegroundRestore;
+    launch.terminateOnExit = breezeTerminateOnExit;
+    rc = daemon::runLibraryApplet(launch, pumpRemoteNroApplet, consumeForegroundAppletHomeRequest);
+    drainBreezeLaunchMessages();
+    g_foregroundAppletActive = false;
+    ::remove(SWITCHU_NRO_REQUEST_PATH);
+    ::remove(SWITCHU_NRO_ACK_PATH);
+    ::remove(SWITCHU_NRO_ACK_TMP_PATH);
+    const Result unregisterRc = daemon::unregisterExternalContent(smi::kMenuTakeoverProgramId);
+    if (R_SUCCEEDED(rc) && R_FAILED(unregisterRc))
+        rc = unregisterRc;
+    if (g_remoteNroTimedOut || !g_remoteNroAcked)
+        rc = R_FAILED(rc) ? rc : KERNELRESULT(TimedOut);
+    if (R_SUCCEEDED(rc) && R_FAILED(g_remoteNroAckResult))
+        rc = g_remoteNroAckResult;
+    daemon::remote::finish(request.id, R_FAILED(rc) ? "failed" : "finished", rc);
+    const bool handedOver = finishBreezeApplet("Remote NRO");
+    g_remoteNroActiveId = 0;
+    if (!handedOver && !g_launchRequestPending)
+        relaunchMenuAfterApplet("Remote NRO");
+    return true;
 }
 
 static constexpr uint64_t kBreezeFastExitNs = 3'000'000'000ULL;
@@ -2949,11 +3152,15 @@ static bool consumeOneAction() {
 static void mainLoop() {
     handleGeneralChannel();
     handleAppletMessages();
+    pollRemoteNroRequests();
     handleMenuCommand();
 
     // SPSM terminates the process asynchronously. Do not schedule catalogue,
     // cache or logging work after the power request has begun.
     if (g_powerSequenceStarted.load())
+        return;
+
+    if (processRemoteNroRequest())
         return;
 
     if (g_pendingBreezeReturnSessionId != 0 &&
@@ -3100,6 +3307,8 @@ static void mainLoop() {
 static bool mainLoopNeedsFastTick() {
     if (g_powerSequenceStarted.load())
         return false;
+    if (g_remoteNroPending || daemon::remote::hasPending())
+        return true;
     if (shouldDeferViewPolling()) {
         return g_menuRelaunchCooldown > 0 || !g_actionQueue.empty() ||
                g_breezeLaunchHandoff.pending();
@@ -3431,9 +3640,17 @@ static void stopControlCacheWorker() {
 
 int main(int argc, char* argv[]) {
     switchu::FileLog::log("[daemon] main() entry");
+    std::error_code configError;
+    std::filesystem::create_directories("sdmc:/config/SwitchU", configError);
+    switchu::FileLog::log("[daemon] Remote NRO channel v1: port=6802 loader=one-shot logs=logs/SwitchU");
 
     ueventCreate(&g_mainWakeEvent, true);
     ueventCreate(&g_controlCacheWakeEvent, true);
+    // A reboot or interrupted handoff must never replay a previous request.
+    ::remove(SWITCHU_NRO_REQUEST_PATH);
+    ::remove(SWITCHU_NRO_ACK_PATH);
+    ::remove(SWITCHU_NRO_ACK_TMP_PATH);
+    daemon::remote::start([] { ueventSignal(&g_mainWakeEvent); });
     Result generalEventRc = appletGetPopFromGeneralChannelEvent(&g_generalChannelEvent);
     g_generalChannelEventReady = R_SUCCEEDED(generalEventRc);
     if (R_FAILED(generalEventRc))
@@ -3475,6 +3692,7 @@ int main(int argc, char* argv[]) {
         waitForMainWork();
     }
 
+    daemon::remote::stop();
     stopEventManager();
     stopControlCacheWorker();
     daemon::menu_la::terminate();

@@ -54,6 +54,45 @@ or enable PC Connect. Both `SwitchU.zip` and `home_daemon.zip` use this daemon.
 
 Host policy check: `g++ -std=c++17 tests/breeze_launch_handoff_test.cpp -o /tmp/breeze-launch-handoff-test && /tmp/breeze-launch-handoff-test`.
 
+## Opening an NRO from BreezePC while Breeze is closed
+
+The HOME daemon provides an independent TCP endpoint on port **6802**. It
+reuses `enable` and `code` from `[PC connect]` in
+`sdmc:/switch/Breeze/config.ini`; Breeze's own port setting remains unchanged.
+The endpoint stays available while Breeze is closed. Missing/disabled PC
+Connect settings disable it, and every connection requires the pairing code.
+
+The PC companion adds **Open Breeze**, **Open NRO...**, and **SwitchU status**.
+Copy `tools/switchu_remote.py` next to BreezePC's `pcconnect_app.py` and apply
+`tools/breezepc-switchu.patch` to add the buttons. The supplied test bundle
+already contains the patched PC app. A script can also use:
+
+```sh
+python tools/switchu_remote.py SWITCH_IP launch /switch/Breeze/Breeze.nro --wait 20
+python tools/switchu_remote.py SWITCH_IP launch /hbmenu.nro --wait 20
+python tools/switchu_remote.py SWITCH_IP status
+```
+
+The CLI prompts for the existing pairing code; `--code-env VARIABLE` is
+available for a local caller. NRO paths are absolute SD paths, optionally
+prefixed with `sdmc:`. Spaces are supported; the normalized UTF-8 path must
+fit 511 bytes. Files must already exist on the SD card.
+
+SwitchU closes and joins the previous applet, acquires the foreground, then
+uses its existing nx-hbloader implementation with a one-shot path request.
+The game is suspended while the requested NRO runs in **applet mode**; the
+daemon does not terminate it. NROs requiring full application memory need a
+different launch mode. A later explicit launch replaces the current applet.
+
+`OK queued N` confirms receipt. Status is `queued`, `launching`, `started`,
+`finished`, or `failed` with an ID and Result. `started` confirms that the
+loader mapped the NRO and handed control to it; NRO initialization or PC
+Connect readiness still requires its own observation. The client polls
+status and never automatically repeats an ambiguous launch request.
+One-shot request/receipt files are cleared at boot and after the holder
+closes, preventing an interrupted launch from replaying. Diagnostics are in
+`sdmc:/logs/SwitchU/`; old logs in `config/SwitchU` are left intact.
+
 ## Screenshots
 
 ![](./screenshots/1.jpg)

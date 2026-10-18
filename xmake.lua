@@ -275,8 +275,8 @@ target("SwitchU")
             local loader_dir = path.join(target:installdir(), "atmosphere", "contents",
                                          "0100000000001000", "breeze_loader")
             os.mkdir(loader_dir)
-            os.cp(path.join(os.projectdir(), "projects/daemon/breeze_loader/main"), loader_dir)
-            os.cp(path.join(os.projectdir(), "projects/daemon/breeze_loader/main.npdm"), loader_dir)
+            os.cp(path.join(os.projectdir(), "build/breeze-loader/main"), loader_dir)
+            os.cp(path.join(os.projectdir(), "build/breeze-loader/main.npdm"), loader_dir)
             cprint("${bright green}installed${clear} Breeze loader → %s", loader_dir)
         end)
     end
@@ -345,6 +345,15 @@ target("switchu-daemon")
     add_deps("atmosphere-stratosphere")
 
     add_files("projects/daemon/src/**.cpp")
+
+    -- Rebuild the existing nx-hbloader with the path-bootstrap extension;
+    -- never package the old fixed-path binary alongside the remote daemon.
+    before_build(function (target)
+        os.vrunv("bash", {
+            path.join(os.projectdir(), "projects/daemon/breeze_loader/build-loader.sh"),
+            path.join(os.projectdir(), "build/breeze-loader")
+        })
+    end)
 
     add_includedirs("projects/common/include", {public = false})
     add_includedirs("lib/Atmosphere-libs/libstratosphere/include")

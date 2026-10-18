@@ -61,6 +61,8 @@ jobs:
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror tests/breeze_launch_handoff_test.cpp -o /tmp/breeze-launch-handoff-test
           /tmp/breeze-launch-handoff-test
+          g++ -std=c++17 -Wall -Wextra -Werror tests/remote_nro_protocol_test.cpp projects/daemon/src/remote_nro_protocol.cpp -o /tmp/remote-nro-protocol-test
+          /tmp/remote-nro-protocol-test
 
       # Atmosphere-libs 1.12.0 (lib/Atmosphere-libs) needs libnx newer than the
       # container's 4.12.0 release (pgl shell events and more). Build the same
