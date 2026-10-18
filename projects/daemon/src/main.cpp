@@ -200,6 +200,7 @@ static uint64_t g_remoteNroLastProbeAt = 0;
 static bool g_remoteNroAcked = false;
 static Result g_remoteNroAckResult = 0;
 static bool g_remoteNroTimedOut = false;
+static bool g_remoteNroHidden = false; // remote NRO held behind its suspended game
 static void pollRemoteNroRequests();
 static bool processRemoteNroRequest();
 static UEvent g_controlCacheWakeEvent{};
@@ -1206,6 +1207,14 @@ static bool breezeSkipForegroundRestore() {
     return g_breezeResumeOnClose || g_breezeCloseForGame;
 }
 
+static bool remoteNroSkipForegroundRestore() {
+    if (g_breezeSession)
+        return breezeSkipForegroundRestore();
+    // A generic remote NRO may close while its game is back in front. Do not
+    // steal foreground from that game as the library-applet runner unwinds.
+    return g_remoteNroHidden && daemon::app::isRunning() && daemon::app::hasForeground();
+}
+
 // Breeze held behind the game can't answer an exit request, so asking it to
 // exit only waited out the timeout (about 3 s before sleep). Close it at once.
 static bool breezeTerminateOnExit() {
@@ -1380,6 +1389,38 @@ static bool handleBreezeHome(const char* source) {
     g_breezeResumeOnClose = true;
     g_pendingForegroundAppletHome = true;
     switchu::FileLog::log("[%s] HOME -> game, closing Breeze for fast restart", source);
+    return true;
+}
+
+// A remote NRO uses the same Album applet host as Breeze, but has independent
+// HOME semantics: retain the NRO holder and toggle foreground with its game.
+// Only handle HOME after a successful loader acknowledgement; failures and
+// startup timeouts keep the normal applet-exit behavior.
+static bool handleRemoteNroHome(const char* source) {
+    if (!g_remoteNroActiveId || !g_foregroundAppletActive || !g_remoteNroAcked ||
+        R_FAILED(g_remoteNroAckResult) || g_remoteNroTimedOut || g_breezeSession)
+        return false;
+
+    if (!daemon::app::isRunning())
+        return false; // no game to toggle to; keep the normal HOME/exit path
+
+    if (daemon::app::hasForeground()) {
+        if (!takeForegroundFromRunningApp(source)) {
+            switchu::FileLog::log("[%s] HOME -> remote NRO aborted: foreground request failed", source);
+            return true;
+        }
+        g_remoteNroHidden = false;
+        switchu::FileLog::log("[%s] HOME -> remote NRO, holding current NRO", source);
+        return true;
+    }
+
+    const Result rc = daemon::app::resume();
+    if (R_FAILED(rc)) {
+        switchu::FileLog::log("[%s] HOME -> game resume from remote NRO FAIL: 0x%X", source, rc);
+        return true; // keep this NRO in front; a failed toggle must not close it
+    }
+    g_remoteNroHidden = true;
+    switchu::FileLog::log("[%s] HOME -> game, holding current remote NRO", source);
     return true;
 }
 
@@ -1712,6 +1753,9 @@ static void openMenuFromHome(const char* source) {
         switchu::FileLog::log("[%s] HOME ignored: foreground handoff already pending", source);
         return;
     }
+
+    if (handleRemoteNroHome(source))
+        return;
 
     if (handleBreezeHome(source))
         return;
@@ -2301,7 +2345,7 @@ static void pumpBreezeAppletMessages() {
     // mainLoop is blocked while the applet runs, so watch the game here.
     if (daemon::app::checkFinished()) {
         switchu::FileLog::log("[breeze] game exited while Breeze open (held=%d)",
-                              g_breezeHidden ? 1 : 0);
+                              (g_breezeHidden || g_remoteNroHidden) ? 1 : 0);
         cancelBreezeReturn("game exited while loader open");
         if (g_breezeOverlay != BreezeOverlayState::None) {
             sendBreezeOverlay(smi::BreezeOverlayCommand::EnterNormal, 1000);
@@ -2312,6 +2356,10 @@ static void pumpBreezeAppletMessages() {
         g_pendingHomeMenuStartedAt = 0;
         if (g_breezeHidden) {
             g_breezeHidden = false;
+            appletRequestToGetForeground();
+        }
+        if (g_remoteNroHidden) {
+            g_remoteNroHidden = false;
             appletRequestToGetForeground();
         }
         return;
@@ -2895,6 +2943,7 @@ static bool processRemoteNroRequest() {
     g_remoteNroAcked = false;
     g_remoteNroAckResult = 0;
     g_remoteNroTimedOut = false;
+    g_remoteNroHidden = false;
     g_remoteNroLoaderStartedAt = armGetSystemTick();
     g_remoteNroLastProbeAt = 0;
     g_foregroundAppletActive = true;
@@ -2907,10 +2956,12 @@ static bool processRemoteNroRequest() {
     launch.inputs = inputs;
     launch.inputCount = 1;
     launch.activeHolder = &g_breezeHolder;
-    launch.skipForegroundRestore = breezeSkipForegroundRestore;
+    launch.skipForegroundRestore = remoteNroSkipForegroundRestore;
     launch.terminateOnExit = breezeTerminateOnExit;
     rc = daemon::runLibraryApplet(launch, pumpRemoteNroApplet, consumeForegroundAppletHomeRequest);
     drainBreezeLaunchMessages();
+    const bool gameStillForegroundBehindNro = g_remoteNroHidden &&
+        daemon::app::isRunning() && daemon::app::hasForeground();
     g_foregroundAppletActive = false;
     ::remove(SWITCHU_NRO_REQUEST_PATH);
     ::remove(SWITCHU_NRO_ACK_PATH);
@@ -2925,7 +2976,8 @@ static bool processRemoteNroRequest() {
     daemon::remote::finish(request.id, R_FAILED(rc) ? "failed" : "finished", rc);
     const bool handedOver = finishBreezeApplet("Remote NRO");
     g_remoteNroActiveId = 0;
-    if (!handedOver && !g_launchRequestPending)
+    g_remoteNroHidden = false;
+    if (!handedOver && !g_launchRequestPending && !gameStillForegroundBehindNro)
         relaunchMenuAfterApplet("Remote NRO");
     return true;
 }
