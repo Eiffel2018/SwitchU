@@ -245,36 +245,45 @@ class Link(threading.Thread):
         self.retarget_to = None      # (host, code) to switch to
         self.capture_lock = threading.Lock()
         self.connected = threading.Event()
+        self.connection_lock = threading.Lock()
 
     def send(self, line):
         self.jobs.put(line)
 
     def retarget(self, host, code):
         """Drop the connection and connect to another Switch (or with another code)."""
-        self.connected.clear()
-        self.retarget_to = (host, code)
+        with self.connection_lock:
+            self.connected.clear()
+            self.retarget_to = (host, code)
 
     def run(self):
         while not self.stop:
-            if self.retarget_to is not None:
-                (self.host, self.code), self.retarget_to = self.retarget_to, None
+            with self.connection_lock:
+                retargeted = self.retarget_to is not None
+                if retargeted:
+                    (self.host, self.code), self.retarget_to = self.retarget_to, None
+            if retargeted:
                 self.out.put(("status", "connecting to %s..." % self.host))
             b = None
             try:
                 b = Breeze(self.host, self.code, timeout=10)
-                self.connected.set()
+                with self.connection_lock:
+                    if self.retarget_to is None and not self.stop:
+                        self.connected.set()
                 self.out.put(("status", "connected: " + b.banner))
                 b.cmd("events on")
                 self.loop(b)
             except Exception as e:  # noqa: BLE001 - shown, then retried
-                self.connected.clear()
+                with self.connection_lock:
+                    self.connected.clear()
                 self.out.put(("status", "disconnected: %s (retrying)" % e))
                 for _ in range(30):
                     if self.stop or self.retarget_to is not None:
                         break
                     time.sleep(0.1)
             finally:
-                self.connected.clear()
+                with self.connection_lock:
+                    self.connected.clear()
                 if b is not None:
                     b.close()
 
@@ -1063,7 +1072,9 @@ class App:
         self.stop_record()
         self.screen_capture.stop()
         self.screen_capture.join(3.2)
-        self.link.connected.clear()
+        with self.link.connection_lock:
+            self.link.stop = True
+            self.link.connected.clear()
         if self.text_open():
             self.text.close()
         if self.asm is not None and self.asm.alive():

@@ -137,6 +137,34 @@ class ScreenCaptureTests(unittest.TestCase):
 
         self.assertEqual(app.link.jobs, ["button 17"])
 
+    def test_link_connection_event_clears_on_retarget_and_close(self):
+        out = queue.Queue()
+        link = pcconnect_app.Link("192.0.2.1", "pair", out)
+        link.connected.set()
+
+        link.retarget("192.0.2.2", "new-pair")
+        self.assertFalse(link.connected.is_set())
+
+        observed = []
+
+        class StopAtAuth:
+            def __init__(self, host, code, timeout):
+                self.banner = "Breeze test"
+                self.host = host
+
+            def cmd(self, command):
+                observed.append(link.connected.is_set())
+                link.stop = True
+                return "+OK"
+
+            def close(self):
+                pass
+
+        with patch.object(pcconnect_app, "Breeze", StopAtAuth):
+            link.run()
+        self.assertEqual(observed, [True])
+        self.assertFalse(link.connected.is_set())
+
 
 if __name__ == "__main__":
     unittest.main()

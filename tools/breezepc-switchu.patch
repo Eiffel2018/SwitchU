@@ -8,43 +8,58 @@
  
  CONFIG = os.path.join(os.path.expanduser("~"), ".breeze_pc.json")
  SCREEN_W, SCREEN_H = 1280, 720
-@@ -242,12 +243,15 @@
+@@ -242,32 +243,47 @@
          self.stop = False
          self.recorder = None
          self.retarget_to = None      # (host, code) to switch to
 +        self.capture_lock = threading.Lock()
 +        self.connected = threading.Event()
++        self.connection_lock = threading.Lock()
  
      def send(self, line):
          self.jobs.put(line)
  
      def retarget(self, host, code):
          """Drop the connection and connect to another Switch (or with another code)."""
-+        self.connected.clear()
-         self.retarget_to = (host, code)
+-        self.retarget_to = (host, code)
++        with self.connection_lock:
++            self.connected.clear()
++            self.retarget_to = (host, code)
  
      def run(self):
-@@ -258,16 +262,19 @@
+         while not self.stop:
+-            if self.retarget_to is not None:
+-                (self.host, self.code), self.retarget_to = self.retarget_to, None
++            with self.connection_lock:
++                retargeted = self.retarget_to is not None
++                if retargeted:
++                    (self.host, self.code), self.retarget_to = self.retarget_to, None
++            if retargeted:
+                 self.out.put(("status", "connecting to %s..." % self.host))
              b = None
              try:
                  b = Breeze(self.host, self.code, timeout=10)
-+                self.connected.set()
++                with self.connection_lock:
++                    if self.retarget_to is None and not self.stop:
++                        self.connected.set()
                  self.out.put(("status", "connected: " + b.banner))
                  b.cmd("events on")
                  self.loop(b)
              except Exception as e:  # noqa: BLE001 - shown, then retried
-+                self.connected.clear()
++                with self.connection_lock:
++                    self.connected.clear()
                  self.out.put(("status", "disconnected: %s (retrying)" % e))
                  for _ in range(30):
                      if self.stop or self.retarget_to is not None:
                          break
                      time.sleep(0.1)
              finally:
-+                self.connected.clear()
++                with self.connection_lock:
++                    self.connected.clear()
                  if b is not None:
                      b.close()
  
-@@ -305,7 +312,11 @@
+@@ -305,7 +321,11 @@
                  rec = self.recorder
                  if rec is not None and line.split()[0] not in QUIET:
                      rec.note("cmd", line)
@@ -57,7 +72,7 @@
                  if isinstance(reply, tuple):
                      if line.startswith("saveshot "):
                          self.out.put(("shot", line.split()[1], reply[1]))
-@@ -324,7 +335,10 @@
+@@ -324,7 +344,10 @@
                  time.sleep(0.03)
              elif self.capture_on.is_set() and time.time() >= next_capture:
                  next_capture = time.time() + 1.0 / max(self.fps, 0.5)
@@ -69,7 +84,7 @@
                  if isinstance(reply, tuple):
                      self.out.put(("frame", reply[1]))
                      rec = self.recorder
-@@ -339,6 +353,128 @@
+@@ -339,6 +362,128 @@
                      b.cmd("ping")
                      time.sleep(0.25)
              self.drain_events(b)
@@ -198,7 +213,7 @@
  
  
  class _XGamepad(ctypes.Structure):
-@@ -430,6 +566,8 @@
+@@ -430,6 +575,8 @@
          self.held = set()
          self.stop = threading.Event()
          self.recorder = None
@@ -207,7 +222,7 @@
  
      def key(self, name, down):
          with self.lock:
-@@ -452,13 +590,22 @@
+@@ -452,13 +599,22 @@
                  self.out.put(("pad", "game input: %s (retrying)" % e))
                  self.stop.wait(3)
              finally:
@@ -236,7 +251,7 @@
          self.out.put(("pad", ""))
  
      def loop(self, b):
-@@ -523,6 +670,15 @@
+@@ -523,6 +679,15 @@
          self.view_w, self.view_h = 960, 540
          self.frames, self.fps_t0 = 0, time.time()
          self.last_reply = ""
@@ -252,7 +267,7 @@
  
          self.canvas = tk.Canvas(root, width=self.view_w, height=self.view_h, bg="black", highlightthickness=0)
          self.canvas.pack(fill="both", expand=True)
-@@ -534,6 +690,16 @@
+@@ -534,6 +699,16 @@
          tk.Button(bar, text="Hide", command=lambda: self.link.send("hide")).pack(side="left")
          tk.Button(bar, text="Reset", command=self.reset).pack(side="left")
          tk.Button(bar, text="Connect...", command=self.on_connect).pack(side="left")
@@ -269,7 +284,7 @@
          tk.Label(bar, text=" Keys:").pack(side="left")
          self.chord = tk.Entry(bar, width=14)
          self.chord.pack(side="left")
-@@ -579,6 +745,7 @@
+@@ -579,6 +754,7 @@
  
          # Game input: the keyboard and a Windows controller as a controller on the Switch.
          self.pad = None
@@ -277,7 +292,7 @@
          gbar = tk.Frame(root)
          gbar.pack(fill="x")
          self.game_var = tk.BooleanVar(value=False)
-@@ -619,7 +786,7 @@
+@@ -619,7 +795,7 @@
          root.bind("<KeyRelease>", self.on_key_up)
          root.bind("<F12>", lambda e: self.on_screenshot())
          root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -286,7 +301,7 @@
          root.bind("<FocusOut>", self.on_focus_out)
          self.canvas.bind("<Configure>", self.on_resize)
          self.canvas.bind("<Button-1>", self.on_click)
-@@ -629,12 +796,22 @@
+@@ -629,12 +805,22 @@
          self.out = queue.Queue()
          self.link = Link(host, code, self.out)
          self.link.start()
@@ -309,7 +324,7 @@
  
      def game_key(self, e):
          return GAME_KEYS.get(e.keysym) or GAME_KEYS.get(e.keysym.lower())
-@@ -647,6 +824,18 @@
+@@ -647,6 +833,18 @@
  
      def on_game_input(self):
          if self.game_var.get():
@@ -328,7 +343,7 @@
              self.pad = PadLink(self.cfg["host"], self.cfg["code"], self.out, self.game_player(), self.label_var.get())
              self.pad.recorder = self.recorder
              self.pad.start()
-@@ -655,7 +844,61 @@
+@@ -655,7 +853,61 @@
              self.canvas.focus_set()
          else:
              self.stop_pad()
@@ -391,7 +406,7 @@
  
      def game_player(self):
          try:
-@@ -675,11 +918,23 @@
+@@ -675,11 +927,23 @@
          pad, self.pad = self.pad, None
          if pad is not None:
              pad.stop.set()
@@ -415,7 +430,7 @@
          else:
              # No virtual controller of ours: attach one for the press only.
              self.link.send("gamepress HOME 120")
-@@ -721,7 +976,7 @@
+@@ -721,7 +985,7 @@
                  self.album.set_folder(self.game_dir("album"), self.game_label())
  
      def on_screenshot(self):
@@ -424,7 +439,7 @@
  
      def save_screenshot(self, data):
          try:
-@@ -765,7 +1020,7 @@
+@@ -765,7 +1029,7 @@
              self.link.recorder = self.recorder
              if self.pad is not None:
                  self.pad.recorder = self.recorder
@@ -433,7 +448,7 @@
              self.status.config(text="recording to " + folder)
          else:
              self.stop_record()
-@@ -778,6 +1033,9 @@
+@@ -778,6 +1042,9 @@
          if rec is not None:
              rec.close()
              self.status.config(text="recorded %d pictures in %s" % (rec.frames, rec.folder))
@@ -443,7 +458,7 @@
  
      def on_text(self):
          if self.text_open():
-@@ -801,7 +1059,11 @@
+@@ -801,7 +1068,13 @@
          return self.text is not None and self.text.alive()
  
      def on_close(self):
@@ -451,11 +466,13 @@
          self.stop_record()
 +        self.screen_capture.stop()
 +        self.screen_capture.join(3.2)
-+        self.link.connected.clear()
++        with self.link.connection_lock:
++            self.link.stop = True
++            self.link.connected.clear()
          if self.text_open():
              self.text.close()
          if self.asm is not None and self.asm.alive():
-@@ -819,6 +1081,11 @@
+@@ -819,6 +1092,11 @@
              if name:
                  self.pad.key(name, True)
              return "break"
@@ -467,7 +484,7 @@
          if e.keysym in ROW_KEYS:
              self.link.send("#rows %d" % ROW_KEYS[e.keysym])
              return "break"
-@@ -849,6 +1116,355 @@
+@@ -849,6 +1127,355 @@
              self.link.send("restart now")
              self.status.config(text="restarting Breeze...")
  
@@ -823,7 +840,7 @@
      def set_fps(self):
          try:
              self.link.fps = float(self.fps_var.get())
-@@ -860,9 +1476,13 @@
+@@ -860,9 +1487,13 @@
          # gets the text box when it opens.
          if self.root.focus_get() is None:
              if self.recorder is None:
@@ -837,7 +854,7 @@
  
      def to_screen(self, x, y):
          return x * SCREEN_W / self.view_w, y * SCREEN_H / self.view_h
-@@ -886,6 +1506,8 @@
+@@ -886,6 +1517,8 @@
          h = None if self.state.get("keyboard") else self.hit(x, y)
          if self.pad is not None and self.state.get("overlay") == "hidden":
              self.pad.send("gametouch %d %d" % (min(int(x), SCREEN_W - 1), min(int(y), SCREEN_H - 1)))
@@ -846,7 +863,7 @@
          elif h and h[0] == "button":
              self.link.send("button %d" % h[1])
          elif h:
-@@ -897,19 +1519,31 @@
+@@ -897,19 +1530,31 @@
          if self.state.get("keyboard"):
              self.on_click(e)  # each click is a key press on Breeze's keyboard
              return
@@ -878,7 +895,7 @@
          self.link.send("cancel")
          return "break"
  
-@@ -1110,10 +1744,14 @@
+@@ -1110,10 +1755,14 @@
              self.game_var.set(False)
              self.on_game_input()
          self.cfg.update(host=host, code=code)
@@ -893,7 +910,7 @@
  
      def on_multi_instance(self):
          self.cfg["multi_instance"] = bool(self.multi_var.get())
-@@ -1419,8 +2057,28 @@
+@@ -1419,8 +2068,28 @@
                          self.last_reply = ""
                  elif item[0] == "status":
                      self.status.config(text=item[1])
