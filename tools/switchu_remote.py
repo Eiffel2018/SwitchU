@@ -113,6 +113,8 @@ def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
                 "launch was sent but SwitchU returned no valid receipt; check status before retrying"
             )
         raise RemoteError("unexpected SwitchU status reply")
+    if path is not None and re.fullmatch(r"OK queued [1-9]\d*", reply) is None:
+        raise AmbiguousLaunchError("launch was sent but its receipt ID is invalid; check status before retrying")
     return reply
 
 
@@ -126,6 +128,9 @@ def launch(host: str, code: str, path: str = DEFAULT_BREEZE, *,
 
 
 def request_id(reply: str) -> int | None:
+    queued = re.fullmatch(r"OK queued ([1-9]\d*)", reply)
+    if queued:
+        return int(queued.group(1))
     match = _ID_RE.search(reply)
     return int(match.group(1)) if match else None
 
@@ -192,8 +197,11 @@ def main(argv=None) -> int:
             state = status_state(observed)
             if newer is not None and newer > number:
                 print("Request %d was superseded by newer request %d; it was not resent." % (number, newer))
+                return 3
             elif state in ("finished", "failed"):
                 print("Loader request %s; requested NRO initialization is not confirmed." % state)
+                if state == "failed":
+                    return 2
         return 0
     except (RemoteError, ValueError) as exc:
         print(str(exc), file=sys.stderr)

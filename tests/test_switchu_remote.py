@@ -75,6 +75,7 @@ class SwitchURemoteTests(unittest.TestCase):
         server = self.with_server()
         reply = remote.launch("127.0.0.1", "pair", "/switch/My Homebrew/Breeze.nro", port=server.port)
         self.assertEqual(reply, "OK queued 7")
+        self.assertEqual(remote.request_id(reply), 7)
         self.assertEqual(server.commands, ["launch /switch/My Homebrew/Breeze.nro"])
 
     def test_sdmc_prefixed_paths_are_preserved(self):
