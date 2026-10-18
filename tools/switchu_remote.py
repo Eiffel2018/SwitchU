@@ -259,10 +259,12 @@ def controller(host: str, code: str, enabled: bool | None = None, *,
 
 
 def capture(host: str, code: str, *, port: int = DEFAULT_PORT,
-            timeout: float = 3.0) -> bytes:
+            timeout: float = 3.0, layer_stack: int | None = None) -> bytes:
     """Read the console's current 1280x720 JPEG without opening Breeze."""
     if not code or "\n" in code or "\r" in code:
         raise ValueError("PC connect code is empty or invalid")
+    if layer_stack is not None and (type(layer_stack) is not int or layer_stack not in (0, 1, 2, 3, 4, 6)):
+        raise ValueError("unsupported capture layer stack")
     deadline = time.monotonic() + timeout
     try:
         with socket.create_connection((host, port), timeout=timeout) as sock:
@@ -272,7 +274,8 @@ def capture(host: str, code: str, *, port: int = DEFAULT_PORT,
             sock.sendall(("auth " + code + "\n").encode("utf-8"))
             if _read_line(sock, deadline=deadline) != "OK auth":
                 raise RemoteError("SwitchU authentication failed")
-            sock.sendall(b"capture\n")
+            command = "capture" if layer_stack is None else "capture %d" % layer_stack
+            sock.sendall((command + "\n").encode("ascii"))
             header = _read_line(sock, deadline=deadline)
             if header.startswith("ERR "):
                 raise RemoteError(header[4:])

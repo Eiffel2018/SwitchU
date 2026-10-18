@@ -8,6 +8,12 @@ using namespace switchu::daemon::remote;
 int main() {
     assert(parseCommand("capture").kind == CommandKind::Capture);
     assert(parseCommand("capture extra").kind == CommandKind::Invalid);
+    for (const char* stack : {"0", "1", "2", "3", "4", "6"}) {
+        const auto command = parseCommand(std::string("capture ") + stack);
+        assert(command.kind == CommandKind::Capture && command.argument == stack);
+    }
+    for (const char* bad : {"capture 5", "capture 7", "capture -1", "capture 00", "capture 1 extra"})
+        assert(parseCommand(bad).kind == CommandKind::Invalid);
     assert(parseCommand("controller off").kind == CommandKind::Controller);
     assert(parseCommand("controller on").argument == "on");
     assert(parseCommand("controller status").argument == "status");

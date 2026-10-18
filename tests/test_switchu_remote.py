@@ -95,6 +95,15 @@ class SwitchURemoteTests(unittest.TestCase):
             remote.capture("127.0.0.1", "wrong", port=server.port)
         self.assertEqual(server.commands, [])
 
+    def test_capture_explicit_stack_and_validation(self):
+        jpeg = b"\xff\xd8test\xff\xd9"
+        server = self.with_server(command_reply="OK capture bytes=8 width=1280 height=720 format=jpeg", payload=jpeg)
+        self.assertEqual(remote.capture("127.0.0.1", "1234", port=server.port, layer_stack=6), jpeg)
+        self.assertEqual(server.commands, ["capture 6"])
+        for invalid in (-1, 5, 7, "2", True):
+            with self.assertRaises(ValueError):
+                remote.capture("invalid-host", "1234", layer_stack=invalid)
+
     def with_server(self, **kwargs):
         server = MockSwitchU(**kwargs)
         self.addCleanup(server.close)

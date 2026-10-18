@@ -46,7 +46,7 @@ bool successCapturesAndReleasesService() {
         && check(output != nullptr && size == reportedSize, "JPEG buffer and size are returned")
         && check((reinterpret_cast<std::uintptr_t>(captureBuffer) & 0xFFF) == 0, "buffer is page aligned")
         && check(captureBufferSize == CAPSSC_JPEG_BUFFER_SIZE, "capture uses the documented maximum buffer")
-        && check(captureStack == ViLayerStack_Lcd && captureTimeout == 250'000'000, "physical display layer stack and bounded timeout are used")
+        && check(captureStack == ViLayerStack_Screenshot && captureTimeout == 250'000'000, "screenshot layer stack and bounded timeout are used")
         && check(events == std::vector<std::string>{"init", "capture", "exit"}, "service is closed after every successful request");
     std::free(output);
     return ok;
@@ -105,6 +105,27 @@ bool invalidArgumentsAreRejected() {
     return nullBuffer && check(R_FAILED(rc) && output == nullptr && events.empty(), "null size output is rejected before service init");
 }
 
+bool explicitStacksAreBounded() {
+    for (const int stack : {0, 1, 2, 3, 4, 6}) {
+        reset();
+        void* output = nullptr;
+        size_t size = 0;
+        const Result rc = switchu::remote_capture::captureJpeg(&output, &size, stack);
+        const bool ok = rc == 0 && captureStack == stack;
+        std::free(output);
+        if (!check(ok, "explicit diagnostic stack is forwarded")) return false;
+    }
+    for (const int stack : {-1, 5, 7, 10}) {
+        reset();
+        void* output = reinterpret_cast<void*>(1);
+        size_t size = 99;
+        const Result rc = switchu::remote_capture::captureJpeg(&output, &size, stack);
+        if (!check(R_FAILED(rc) && !output && !size && events.empty(),
+                   "unknown/arbitrary stacks are rejected before allocation/service")) return false;
+    }
+    return true;
+}
+
 } // namespace
 
 extern "C" {
@@ -138,6 +159,7 @@ int main() {
     ok = captureFailureClosesServiceAndResetsOutputs() && ok;
     ok = malformedLengthsAndMarkersAreRejected() && ok;
     ok = invalidArgumentsAreRejected() && ok;
+    ok = explicitStacksAreBounded() && ok;
     if (!ok)
         return EXIT_FAILURE;
     std::cout << "remote NRO capture host tests passed\n";

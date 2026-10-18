@@ -48,6 +48,9 @@ Command parseCommand(std::string_view line) {
         return {CommandKind::Status, {}};
     if (line == "capture")
         return {CommandKind::Capture, {}};
+    if (line.size() == 9 && line.substr(0, 8) == "capture "
+        && (line[8] >= '0' && line[8] <= '6') && line[8] != '5')
+        return {CommandKind::Capture, std::string(line.substr(8))};
     for (const char* action : {"on", "off", "status"}) {
         if (line == std::string("controller ") + action)
             return {CommandKind::Controller, action};

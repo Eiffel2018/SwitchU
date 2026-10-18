@@ -375,7 +375,9 @@ const char* serveClient(int fd) {
         } else if (command.kind == CommandKind::Capture) {
             void* image = nullptr;
             std::size_t size = 0;
-            const Result rc = switchu::remote_capture::captureJpeg(&image, &size);
+            const ViLayerStack stack = command.argument.empty() ? ViLayerStack_Screenshot
+                : static_cast<ViLayerStack>(command.argument[0] - '0');
+            const Result rc = switchu::remote_capture::captureJpeg(&image, &size, stack);
             char response[128];
             if (R_FAILED(rc)) {
                 const int count = std::snprintf(response, sizeof(response),

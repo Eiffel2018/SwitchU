@@ -92,6 +92,11 @@ display, including other NROs while Breeze is closed. Its reply is
 `OK capture bytes=N width=1280 height=720 format=jpeg`, followed by exactly N
 binary bytes (at most 512 KiB). This does not press Capture or write an album
 file. Python callers use `switchu_remote.capture(host, code)`.
+For capture diagnostics, `capture N` selects a bounded layer stack (0, 1, 2,
+3, 4 or 6); Python exposes this as `layer_stack=N`. The bare command uses
+the screenshot stack (2). Default (0) can include hidden applet layers, and
+LCD (1) returned black on the tested console, so neither is foreground proof.
+Visual acceptance must compare both the game and the retained NRO.
 BreezePC's live picture and Screenshot/F12 prefer this 6802 path independently
 of the 6801 connection; Breeze-only installations retain the original 6801
 capture fallback. Capture is read-only and does not attach a controller.
