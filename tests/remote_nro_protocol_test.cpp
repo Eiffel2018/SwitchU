@@ -54,6 +54,20 @@ int main() {
         assert(!constantTimeEqual(command.argument, "037"));
     }
     {
+        auto tap = parseCommand("touch tap 0 719 100");
+        assert(tap.kind == CommandKind::Touch && tap.stickX == 0 && tap.stickY == 719 && tap.holdMs == 100);
+        auto twice = parseCommand("touch double 1279 0 80 120");
+        assert(twice.kind == CommandKind::Touch && twice.argument == "double" && twice.gapMs == 120);
+        assert(parseCommand("touch long 640 360 5000").kind == CommandKind::Touch);
+        for (const char* bad : {"touch tap 1280 0 100", "touch tap 0 720 100",
+             "touch tap -1 0 100", "touch tap 0 0 0", "touch tap 0 0 301",
+             "touch long 0 0 299", "touch long 0 0 5001", "touch double 0 0 100 49",
+             "touch double 0 0 100 501", "touch double 0 0 100", "touch tap 0 0 100 100",
+             "touch tap 0 0 100 ", "touch tap 0  0 100", "touch double 0 0 100 120 extra",
+             "touch swipe 0 0 100", "touch tap 0.5 0 100", "touch tap 99999999999999999 0 100"})
+            assert(parseCommand(bad).kind == CommandKind::Invalid);
+    }
+    {
         const Command command = parseCommand("STATUS");
         assert(command.kind == CommandKind::Status);
     }

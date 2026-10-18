@@ -3,6 +3,7 @@
 #include "remote_nro_protocol.hpp"
 #include "remote_nro_input.hpp"
 #include "remote_nro_capture.hpp"
+#include "remote_nro_touch.hpp"
 #include <switch.h>
 #include <switchu/file_log.hpp>
 
@@ -357,6 +358,8 @@ const char* serveClient(int fd) {
             if (command.argument == "off") {
                 g_inputBlocked.store(true);
                 rc = switchu::remote_input::shutdown();
+                const Result touchRc = switchu::remote_touch::shutdown();
+                if (R_SUCCEEDED(rc)) rc = touchRc;
                 diagnostic("controller-blocked", fd, 0, rc);
             } else if (command.argument == "on") {
                 g_inputBlocked.store(false);
@@ -416,6 +419,25 @@ const char* serveClient(int fd) {
             diagnostic(R_SUCCEEDED(rc) ? "input-released" : "input-failed", fd, 0, rc);
             if (count <= 0 || !sendAll(fd, std::string_view(response, count), "input-response"))
                 return "input-response-failed";
+        } else if (command.kind == CommandKind::Touch) {
+            if (g_inputBlocked.load()) {
+                answerError(fd, "input-disabled");
+                return "input-blocked";
+            }
+            // One complete gesture is serialized on this worker. No gamepad,
+            // extra controller slot, or client-held touch remains afterward.
+            const Result rc = switchu::remote_touch::gesture(
+                command.stickX, command.stickY, command.holdMs,
+                command.argument == "double", command.gapMs);
+            char response[128];
+            const int count = R_SUCCEEDED(rc)
+                ? std::snprintf(response, sizeof(response),
+                    "OK touch %s x=%d y=%d ms=%u gap=%u\n", command.argument.c_str(),
+                    command.stickX, command.stickY, command.holdMs, command.gapMs)
+                : std::snprintf(response, sizeof(response), "ERR touch rc=0x%08X\n", rc);
+            diagnostic(R_SUCCEEDED(rc) ? "touch-released" : "touch-failed", fd, 0, rc);
+            if (count <= 0 || !sendAll(fd, std::string_view(response, count), "touch-response"))
+                return "touch-response-failed";
         } else if (command.kind == CommandKind::Stick) {
             if (g_inputBlocked.load()) {
                 answerError(fd, "input-disabled");
@@ -538,6 +560,9 @@ void serverThread(void*) {
     const Result inputCleanup = switchu::remote_input::shutdown();
     if (R_FAILED(inputCleanup))
         diagnostic("input-cleanup-failed", -1, 0, inputCleanup);
+    const Result touchCleanup = switchu::remote_touch::shutdown();
+    if (R_FAILED(touchCleanup))
+        diagnostic("touch-cleanup-failed", -1, 0, touchCleanup);
     if (socketReady)
         socketExit();
     switchu::FileLog::log("[remote-nro] listener stopped");

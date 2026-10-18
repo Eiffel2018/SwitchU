@@ -65,6 +65,8 @@ jobs:
           /tmp/remote-nro-protocol-test
           g++ -std=c++17 -Wall -Wextra -Werror -I tests/remote_nro_input_stub tests/remote_nro_input_test.cpp projects/daemon/src/remote_nro_input.cpp -o /tmp/remote-nro-input-test
           /tmp/remote-nro-input-test
+          g++ -std=c++17 -Wall -Wextra -Werror -I tests/remote_nro_input_stub tests/remote_nro_touch_test.cpp projects/daemon/src/remote_nro_touch.cpp -o /tmp/remote-nro-touch-test
+          /tmp/remote-nro-touch-test
           g++ -std=c++17 -Wall -Wextra -Werror -I tests/remote_nro_capture_stub tests/remote_nro_capture_test.cpp projects/daemon/src/remote_nro_capture.cpp -o /tmp/remote-nro-capture-test
           /tmp/remote-nro-capture-test
 
@@ -121,6 +123,18 @@ jobs:
 
       - name: Package install layout
         run: xmake install -o "dist/${{ matrix.variant }}/${{ matrix.mode }}" --root
+
+      - name: Build read-only controller and touch Probe
+        if: matrix.variant == 'sysmodule' && matrix.mode == 'release'
+        run: make -C tools/controller-probe -j2
+
+      - name: Upload controller and touch Probe
+        if: matrix.variant == 'sysmodule' && matrix.mode == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Controller-Probe
+          path: tools/controller-probe/controller-probe.nro
+          if-no-files-found: error
 
       # The same two files a local release ships: SwitchU.zip (the whole
       # install layout) and home_daemon.zip (the daemon folder only, which

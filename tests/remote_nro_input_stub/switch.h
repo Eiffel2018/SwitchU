@@ -27,6 +27,10 @@ constexpr u64 HidNpadButton_RightSR = 1ULL << 27;
 #define RGBA8_MAXALPHA(r, g, b) ((static_cast<u32>(r) << 24) | (static_cast<u32>(g) << 16) | (static_cast<u32>(b) << 8) | 0xFF)
 
 struct HidAnalogStickState { s32 x; s32 y; };
+struct HidTouchState {
+    u64 delta_time;
+    u32 attributes, finger_id, x, y, diameter_x, diameter_y, rotation_angle, reserved;
+};
 struct HiddbgHdlsSessionId { u64 id; };
 struct HiddbgHdlsHandle { u64 handle; };
 struct HiddbgHdlsDeviceInfo {
@@ -54,6 +58,8 @@ struct HiddbgHdlsState {
 extern "C" {
 Result hiddbgInitialize(void);
 void hiddbgExit(void);
+Result hiddbgSetTouchScreenAutoPilotState(const HidTouchState*, s32);
+Result hiddbgUnsetTouchScreenAutoPilotState(void);
 Result hiddbgAttachHdlsWorkBuffer(HiddbgHdlsSessionId*, void*, std::size_t);
 Result hiddbgReleaseHdlsWorkBuffer(HiddbgHdlsSessionId);
 Result hiddbgAttachHdlsVirtualDevice(HiddbgHdlsHandle*, const HiddbgHdlsDeviceInfo*);

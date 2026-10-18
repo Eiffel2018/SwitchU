@@ -103,6 +103,24 @@ BreezePC's live picture and Screenshot/F12 prefer this 6802 path independently
 of the 6801 connection; Breeze-only installations retain the original 6801
 capture fallback. Capture is read-only and does not attach a controller.
 
+The touch extension adds single-finger gestures over the same 6802 input
+gate: `touch tap X Y MS`, `touch double X Y MS GAP_MS`, and
+`touch long X Y MS`. Coordinates use the 1280×720 screenshot (X 0–1279,
+Y 0–719). Tap/double holds are 1–300 ms, double gaps 50–500 ms, and long
+holds 300–5000 ms. Each complete gesture is serialized, publishes a lift,
+then unsets touch autopilot; it does not create a virtual gamepad or occupy
+a player slot. `controller off` also cleans up this module's touch override.
+Python: `switchu_remote.touch(host, code, 640, 360, gesture="double")`.
+Its default timeout grows for long holds. Unknown results are never replayed.
+The ordinary 100 ms gamepad discovery delay does not apply to touch.
+
+In BreezePC's SwitchU controls, use X/Y/hold/gap fields and **Send Touch**,
+or enable **Touch preview via 6802**: click, double-click, or hold and release
+on the picture. Letterboxing and drag gestures are excluded. The first click
+is delayed 550 ms to coalesce a double-click into one request. Touch preview
+is off by default; the original Breeze menu/keyboard clicks remain available.
+This extension is pending hardware acceptance on the touch development branch.
+
 The controller is shared by the daemon's serialized input worker. Each bounded
 operation now neutralizes input, detaches its virtual device, releases its HDLS
 work buffer and closes its HID debug service, including failure cleanup. It

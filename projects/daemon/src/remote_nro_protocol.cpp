@@ -56,6 +56,34 @@ Command parseCommand(std::string_view line) {
             return {CommandKind::Controller, action};
     }
     constexpr std::string_view stickPrefix = "stick ";
+    if (line.substr(0, 6) == "touch ") {
+        auto args = line.substr(6);
+        std::array<std::string_view, 5> fields{};
+        std::size_t count = 0;
+        while (!args.empty() && count < fields.size()) {
+            const auto end = args.find(' ');
+            fields[count++] = args.substr(0, end);
+            if (end == std::string_view::npos) { args = {}; break; }
+            args.remove_prefix(end + 1);
+            if (args.empty()) return {};
+        }
+        const bool twice = fields[0] == "double";
+        if (!args.empty() || count != (twice ? 5U : 4U)
+            || (!twice && fields[0] != "tap" && fields[0] != "long")) return {};
+        std::uint32_t x = 0, y = 0, ms = 0, gap = 0;
+        const auto integer = [](std::string_view text, auto& value) {
+            const auto r = std::from_chars(text.data(), text.data() + text.size(), value);
+            return r.ec == std::errc{} && r.ptr == text.data() + text.size();
+        };
+        if (!integer(fields[1], x) || !integer(fields[2], y) || !integer(fields[3], ms)
+            || x >= 1280 || y >= 720 || ms == 0
+            || (fields[0] == "long" ? (ms < 300 || ms > 5000) : ms > 300)
+            || (twice && (!integer(fields[4], gap) || gap < 50 || gap > 500))) return {};
+        Command result{CommandKind::Touch, std::string(fields[0]), ms, 0,
+                       static_cast<std::int32_t>(x), static_cast<std::int32_t>(y)};
+        result.gapMs = gap;
+        return result;
+    }
     if (line.substr(0, stickPrefix.size()) == stickPrefix) {
         auto args = line.substr(stickPrefix.size());
         std::array<std::string_view, 4> fields{};

@@ -23,3 +23,9 @@ The trace retains the latest 128 frame changes. Each authenticated connection
 is limited to 64 input-loop frames. Build with the standard devkitPro libnx
 Makefile. This directory is licensed under GPL-3.0-only; see the repository
 root `LICENSE`.
+# Touch observations
+
+The Probe also records `touch_count`, `touch_x`, `touch_y` and per-trace
+`tc/tx/ty` fields. It reads the actual HID touch stream, enabling gesture
+counts, coordinates, held frames and release to be verified over TCP 6803.
+It does not inject touch. Existing button and stick fields are unchanged.
