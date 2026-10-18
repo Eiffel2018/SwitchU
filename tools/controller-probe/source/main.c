@@ -25,7 +25,7 @@ typedef struct {
     uint64_t frame;
     uint64_t buttons;
     int32_t lx, ly, rx, ry;
-    uint32_t tc, tx, ty, ta;
+    uint32_t tc, tx, ty;
 } TraceEntry;
 
 typedef struct {
@@ -51,7 +51,7 @@ static int32_t g_lx, g_ly, g_rx, g_ry;
 static uint64_t g_previous_buttons;
 static int32_t g_previous_lx, g_previous_ly, g_previous_rx, g_previous_ry;
 static bool g_have_previous;
-static uint32_t g_tc, g_tx, g_ty, g_previous_tc, g_previous_tx, g_previous_ty, g_ta, g_previous_ta;
+static uint32_t g_tc, g_tx, g_ty, g_previous_tc, g_previous_tx, g_previous_ty;
 
 static char* trim(char* text) {
     while (*text == ' ' || *text == '\t' || *text == '\r' || *text == '\n')
@@ -143,20 +143,20 @@ static bool read_pc_settings(void) {
 static void record_input_change(void) {
     if (g_have_previous && g_buttons == g_previous_buttons && g_lx == g_previous_lx
         && g_ly == g_previous_ly && g_rx == g_previous_rx && g_ry == g_previous_ry
-        && g_tc == g_previous_tc && g_tx == g_previous_tx && g_ty == g_previous_ty && g_ta == g_previous_ta)
+        && g_tc == g_previous_tc && g_tx == g_previous_tx && g_ty == g_previous_ty)
         return;
     TraceEntry* entry = &g_trace[g_trace_head];
     entry->frame = g_frame;
     entry->buttons = g_buttons;
     entry->lx = g_lx; entry->ly = g_ly;
     entry->rx = g_rx; entry->ry = g_ry;
-    entry->tc = g_tc; entry->tx = g_tx; entry->ty = g_ty; entry->ta = g_ta;
+    entry->tc = g_tc; entry->tx = g_tx; entry->ty = g_ty;
     g_trace_head = (g_trace_head + 1) % MAX_TRACE;
     if (g_trace_count < MAX_TRACE) ++g_trace_count;
     g_previous_buttons = g_buttons;
     g_previous_lx = g_lx; g_previous_ly = g_ly;
     g_previous_rx = g_rx; g_previous_ry = g_ry;
-    g_previous_tc = g_tc; g_previous_tx = g_tx; g_previous_ty = g_ty; g_previous_ta = g_ta;
+    g_previous_tc = g_tc; g_previous_tx = g_tx; g_previous_ty = g_ty;
     g_have_previous = true;
 }
 
@@ -172,9 +172,9 @@ static bool queue_snapshot(Client* client) {
     char* out = client->output + client->output_length;
     size_t left = sizeof(client->output) - client->output_length;
     int written = snprintf(out, left,
-        "{\"frame\":%llu,\"buttons\":\"0x%016llX\",\"lx\":%d,\"ly\":%d,\"rx\":%d,\"ry\":%d,\"touch_count\":%u,\"touch_x\":%u,\"touch_y\":%u,\"touch_attributes\":%u,\"trace\":[",
+        "{\"frame\":%llu,\"buttons\":\"0x%016llX\",\"lx\":%d,\"ly\":%d,\"rx\":%d,\"ry\":%d,\"touch_count\":%u,\"touch_x\":%u,\"touch_y\":%u,\"trace\":[",
         (unsigned long long)g_frame, (unsigned long long)g_buttons,
-        g_lx, g_ly, g_rx, g_ry, g_tc, g_tx, g_ty, g_ta);
+        g_lx, g_ly, g_rx, g_ry, g_tc, g_tx, g_ty);
     if (written < 0 || (size_t)written >= left) return false;
     client->output_length += (size_t)written;
 
@@ -184,10 +184,10 @@ static bool queue_snapshot(Client* client) {
         out = client->output + client->output_length;
         left = sizeof(client->output) - client->output_length;
         written = snprintf(out, left,
-            "%s{\"f\":%llu,\"b\":\"0x%016llX\",\"lx\":%d,\"ly\":%d,\"rx\":%d,\"ry\":%d,\"tc\":%u,\"tx\":%u,\"ty\":%u,\"ta\":%u}",
+            "%s{\"f\":%llu,\"b\":\"0x%016llX\",\"lx\":%d,\"ly\":%d,\"rx\":%d,\"ry\":%d,\"tc\":%u,\"tx\":%u,\"ty\":%u}",
             i ? "," : "", (unsigned long long)entry->frame,
             (unsigned long long)entry->buttons,
-            entry->lx, entry->ly, entry->rx, entry->ry, entry->tc, entry->tx, entry->ty, entry->ta);
+            entry->lx, entry->ly, entry->rx, entry->ry, entry->tc, entry->tx, entry->ty);
         if (written < 0 || (size_t)written >= left) return false;
         client->output_length += (size_t)written;
     }
@@ -344,9 +344,9 @@ static void update_pad(PadState* pad) {
     g_lx = left.x; g_ly = left.y;
     g_rx = right.x; g_ry = right.y;
     HidTouchScreenState touch = {0};
-    g_tc = g_tx = g_ty = g_ta = 0;
+    g_tc = g_tx = g_ty = 0;
     if (hidGetTouchScreenStates(&touch, 1) > 0 && touch.count) {
-        g_tc = touch.count; g_tx = touch.touches[0].x; g_ty = touch.touches[0].y; g_ta = touch.touches[0].attributes;
+        g_tc = touch.count; g_tx = touch.touches[0].x; g_ty = touch.touches[0].y;
     }
     ++g_frame;
     record_input_change();

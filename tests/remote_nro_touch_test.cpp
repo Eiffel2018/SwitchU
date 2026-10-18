@@ -25,22 +25,18 @@ void svcSleepThread(u64 ns) { sleeps.push_back(ns); }
 int main() {
     using namespace switchu::remote_touch;
     reset(); assert(gesture(1279,719,100,false,0)==0);
-    assert((contacts==std::vector<int>{0,1,1,1,0}));
+    assert((contacts==std::vector<int>{0,1,0}));
     assert(points[1].x==1279 && points[1].y==719 && points[1].finger_id==1);
-    assert(points[1].attributes==HidTouchAttribute_Start && points[2].attributes==0
-        && points[3].attributes==HidTouchAttribute_End);
-    assert((sleeps==std::vector<u64>{50'000'000,20'000'000,80'000'000,20'000'000,50'000'000}));
+    assert((sleeps==std::vector<u64>{50'000'000,100'000'000,50'000'000}));
     assert(unsets==1 && exits==1); assert(shutdown()==0 && inits==1);
     reset(); assert(gesture(10,20,80,true,120)==0);
-    assert((contacts==std::vector<int>{0,1,1,1,0,1,1,1,0}));
-    assert((sleeps==std::vector<u64>{50'000'000,20'000'000,60'000'000,20'000'000,100'000'000,20'000'000,60'000'000,20'000'000,50'000'000}));
+    assert((contacts==std::vector<int>{0,1,0,1,0}));
+    assert((sleeps==std::vector<u64>{50'000'000,80'000'000,120'000'000,80'000'000,50'000'000}));
     reset(); assert(gesture(640,360,5000,false,0)==0);
-    assert(sleeps[1]+sleeps[2]==5'000'000'000ULL && unsets==1 && exits==1);
-    for (int fail=1;fail<=9;++fail) {
+    assert(sleeps[1]==5'000'000'000ULL && unsets==1 && exits==1);
+    for (int fail=1;fail<=5;++fail) {
         reset(); failSet=fail; assert(gesture(10,20,100,true,120)==123U);
-        assert(unsets==1 && exits==1);
-        for (unsigned i=static_cast<unsigned>(fail);i<points.size();++i)
-            assert(points[i].attributes!=HidTouchAttribute_Start); // only release cleanup, never replay
+        assert(unsets==1 && exits==1 && sets==fail); // no gesture replay
     }
     reset(); failInit=99; assert(gesture(0,0,100,false,0)==99);
     assert(sets==0 && unsets==0 && exits==0);

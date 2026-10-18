@@ -31,8 +31,6 @@ struct HidTouchState {
     u64 delta_time;
     u32 attributes, finger_id, x, y, diameter_x, diameter_y, rotation_angle, reserved;
 };
-constexpr u32 HidTouchAttribute_Start = 1;
-constexpr u32 HidTouchAttribute_End = 2;
 struct HiddbgHdlsSessionId { u64 id; };
 struct HiddbgHdlsHandle { u64 handle; };
 struct HiddbgHdlsDeviceInfo {
