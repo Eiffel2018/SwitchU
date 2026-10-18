@@ -1,0 +1,24 @@
+name: BreezePC package
+on:
+  push:
+    branches: [breeze-home-toggle, master]
+    paths: ['tools/**', '.github/workflows/breezepc.yml', 'LICENSE']
+  pull_request:
+    paths: ['tools/**', '.github/workflows/breezepc.yml', 'LICENSE']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python tools/package_breezepc.py artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BreezePC
+          path: artifacts/*.zip
+          if-no-files-found: error

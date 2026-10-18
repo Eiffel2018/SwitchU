@@ -70,10 +70,11 @@ that an NRO received it (controller assignment and NRO support still apply).
 The wire command is `press PLUS 100`, with standard buttons A/B/X/Y,
 L/R/ZL/ZR, PLUS/MINUS, LSTICK/RSTICK and UP/DOWN/LEFT/RIGHT. Holds are bounded
 to 1–1000 ms; the client never replays an uncertain input reply.
-Follow [the BreezePC patch instructions](tools/BREEZEPC-PATCHES.md) to copy
-the companion modules and apply the recent-game patch, then the SwitchU patch.
-The supplied test bundle
-already contains the patched PC app. A script can also use:
+The [complete patched BreezePC sources and packaging instructions](tools/breezepc/README.md)
+are included. `python tools/package_breezepc.py dist/breezepc` creates a complete
+`BreezePC.zip` and an overwrite-only `BreezePC-update.zip`; the **BreezePC package**
+workflow also publishes both as an artifact. Existing UI source patches remain
+available as an alternative. A script can also use:
 
 ```sh
 python tools/switchu_remote.py SWITCH_IP launch /switch/Breeze/Breeze.nro --wait 20

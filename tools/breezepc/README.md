@@ -1,0 +1,38 @@
+# BreezePC with SwitchU controls
+
+This folder contains the full patched BreezePC UI and its companion sources,
+from the user's Breeze v125.04 package. The UI source matches the version
+used for the SwitchU hardware checks (checkout line endings may differ). The precise upstream source commit for
+that original package was not recorded. BreezePC originates from
+[tomvita/Breeze-Beta](https://github.com/tomvita/Breeze-Beta); GPL-3.0 license
+text is supplied in the packages.
+
+Build both downloadable packages from the repository root:
+
+```sh
+python tools/package_breezepc.py dist/breezepc
+```
+
+- `BreezePC.zip`: complete Python companion, including its launcher and local modules.
+- `BreezePC-update.zip`: overwrite these three files in an existing BreezePC folder:
+  `pcconnect_app.py`, `switchu_remote.py`, `pc_game_history.py`.
+
+The packager includes the two canonical helper modules from `tools/`; they
+are not maintained as duplicate source files in this folder. To run directly
+from this source folder, copy those two modules here first.
+
+Install Python 3 with Tk support, then `python -m pip install Pillow capstone`.
+Extract `BreezePC.zip` and run `pcconnect_app.bat` on Windows, or
+`python pcconnect_app.py`. Existing IP/code settings are reused from
+`~/.breeze_pc.json`; settings and credentials are not included in the packages.
+Ghidra/Java/pyghidra are optional for the existing decompiler feature and are
+not bundled.
+
+**Open Breeze**, **Open NRO**, **SwitchU status**, and **SwitchU controller**
+use authenticated TCP 6802 even when Breeze is closed. The daemon update must
+be installed and the Switch rebooted first. Game TID start/stop and the
+existing Breeze UI/file functions still use Breeze TCP 6801.
+
+This is the same NRO/input protocol tested with daemon `d810bfa`. A loader
+`started` response is not an NRO-readiness check; uncertain input is never
+automatically replayed. No sys-botbase module is required.
