@@ -1,7 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -9,7 +9,7 @@ TOOLS_DIR = REPO_ROOT / "tools"
 sys.path.insert(0, str(TOOLS_DIR))
 from pc_game_history import clean, remember, valid_tid  # noqa: E402
 
-APP_DIR = Path(r"R:\Breeze_v125.04")
+APP_DIR = REPO_ROOT / "tools" / "breezepc"
 pcconnect_app = None
 if APP_DIR.is_dir():
     sys.path.insert(0, str(APP_DIR))
@@ -66,6 +66,9 @@ class FakeMenu:
     def add_command(self, **kwargs):
         self.items.append(kwargs)
 
+    def add_separator(self):
+        self.items.append({"separator": True})
+
     def tk_popup(self, x, y):
         assert (x, y) == (10, 25)
 
@@ -121,6 +124,7 @@ class GameHistoryTests(unittest.TestCase):
         app.save = {"game_running": False}
         app.link = FakeLink()
         app.status = FakeLabel()
+        app.save_cfg = Mock()
         return app
 
     @unittest.skipIf(pcconnect_app is None, "BreezePC source is only available on the configured PC")
@@ -130,12 +134,13 @@ class GameHistoryTests(unittest.TestCase):
         with patch.object(pcconnect_app.tk, "Menu", FakeMenu):
             app.on_start_game()
             menu = FakeMenu.instances[-1]
-            self.assertEqual([item["label"] for item in menu.items], [
+            self.assertEqual([item["label"] for item in menu.items if "label" in item], [
+                "Enter TID...",
                 "Alpha  [0100000000001000]",
                 "Beta  [0100000000002000]",
                 "Legacy  [0100000000003000]",
             ])
-            menu.items[1]["command"]()
+            menu.items[3]["command"]()
             self.assertEqual(app.link.sent, ["gamestart 0100000000002000"])
             app.on_game_reply("gamestart 0100000000002000", "+OK starting")
             self.assertIn("Waiting for the daemon to restore Breeze", app.status.text)
@@ -171,7 +176,43 @@ class GameHistoryTests(unittest.TestCase):
             app.on_start_game()
             self.assertEqual(FakeMenu.instances, [])
             app.start_game("0100000000001000")
+            with patch.object(pcconnect_app.simpledialog, "askstring") as ask:
+                app.on_start_game_tid()
+                ask.assert_not_called()
         self.assertEqual(app.link.sent, [])
+
+    def test_manual_start_available_without_history_and_remembered_on_acceptance(self):
+        app = self.make_app()
+        app.cfg = {}
+        with patch.object(pcconnect_app.tk, "Menu", FakeMenu), \
+                patch.object(pcconnect_app.simpledialog, "askstring", return_value=" 0x0100005027a18000 "):
+            app.on_start_game()
+            menu = FakeMenu.instances[-1]
+            self.assertEqual(len(menu.items), 1)
+            menu.items[0]["command"]()
+        self.assertEqual(app.link.sent, ["gamestart 0100005027A18000"])
+        self.assertNotIn("game_history", app.cfg)
+        app.on_game_reply(app.link.sent[0], "+OK starting")
+        self.assertEqual(app.cfg["game_history"], [{"tid": "0100005027A18000", "name": ""}])
+        app.save_cfg.assert_called_once()
+
+    def test_manual_invalid_inputs_then_cancel_send_nothing(self):
+        app = self.make_app()
+        with patch.object(pcconnect_app.simpledialog, "askstring",
+                          side_effect=["0000000000000000", "0100005027A1800Z", None]), \
+                patch.object(pcconnect_app.messagebox, "showerror") as error:
+            app.on_start_game_tid()
+        self.assertEqual(error.call_count, 2)
+        self.assertEqual(app.link.sent, [])
+        app.save_cfg.assert_not_called()
+
+    def test_rejected_start_does_not_add_history(self):
+        app = self.make_app()
+        before = list(app.cfg["game_history"])
+        with patch.object(pcconnect_app.messagebox, "showerror"):
+            app.on_game_reply("gamestart 0100005027A18000", "-ERR not installed")
+        self.assertEqual(app.cfg["game_history"], before)
+        app.save_cfg.assert_not_called()
 
 
 if __name__ == "__main__":

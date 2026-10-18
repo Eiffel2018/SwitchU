@@ -33,6 +33,11 @@ use authenticated TCP 6802 even when Breeze is closed. The daemon update must
 be installed and the Switch rebooted first. Game TID start/stop and the
 existing Breeze UI/file functions still use Breeze TCP 6801.
 
+**Start game → Enter TID...** accepts a nonzero 16-digit hexadecimal title ID
+(with an optional `0x` prefix), even when the recent-game list is empty.
+Accepted start requests are remembered in that list; observed game names can
+replace the bare TID later. Invalid input and Cancel send no start request.
+
 The Joy-Con-style controller includes HOME, separate D-pad and left/right
 analog pads, L3/R3 stick clicks, and Capture: 26 operations in total,
 including the eight stick directions and two center clicks. Rail and SYNC

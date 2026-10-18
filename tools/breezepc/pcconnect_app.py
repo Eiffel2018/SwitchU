@@ -33,7 +33,7 @@ The last ip and code are remembered in ~/.breeze_pc.json.
   from the console to the SD card or back. With the box unticked a snapshot
   can only be taken while the game is closed.
 - Stop game ends the running game at once, as if it had crashed: anything it
-  has not saved is lost. Start game offers recently observed games; Breeze closes
+  has not saved is lost. Start game offers recent games or a manually entered TID; Breeze closes
   to let it start and comes back the way it does after any exit (press HOME
   if it does not). Together with Restore: Stop game, Restore, Start game.
 - Game input sends the keyboard and a Windows controller to the game instead
@@ -1949,9 +1949,6 @@ class App:
             if tid and tid not in known_tids:
                 history.append({"tid": tid, "name": name})
                 known_tids.add(tid)
-        if not history:
-            messagebox.showinfo("Start game", "No game has been observed yet.", parent=self.root)
-            return
         previous = getattr(self, "start_menu", None)
         if previous is not None:
             try:
@@ -1966,6 +1963,9 @@ class App:
         menu = tk.Menu(self.root, tearoff=0)
         self.start_menu = menu
         menu.bind("<Unmap>", lambda _event, popup=menu: self.close_start_menu(popup), add="+")
+        menu.add_command(label="Enter TID...", command=self.on_start_game_tid)
+        if history:
+            menu.add_separator()
         for entry in history:
             tid, name = entry["tid"], entry["name"]
             label = "%s  [%s]" % (name or tid, tid)
@@ -1974,6 +1974,26 @@ class App:
         y = self.start_btn.winfo_rooty() + self.start_btn.winfo_height()
         menu.tk_popup(x, y)
         menu.grab_release()
+
+    def on_start_game_tid(self):
+        if self.save and self.save.get("game_running"):
+            return
+        value = ""
+        while True:
+            value = simpledialog.askstring(
+                "Start game", "Game TID (16 hexadecimal digits, optional 0x prefix):",
+                initialvalue=value, parent=self.root)
+            if value is None:
+                return
+            candidate = value.strip()
+            if candidate.lower().startswith("0x"):
+                candidate = candidate[2:]
+            tid = valid_tid(candidate)
+            if tid:
+                self.start_game(tid)
+                return
+            messagebox.showerror(
+                "Start game", "Enter a nonzero, 16-digit hexadecimal TID.", parent=self.root)
 
     def close_start_menu(self, menu):
         """Release the popup after selection or cancellation."""
@@ -2002,6 +2022,10 @@ class App:
         if not reply.startswith("+OK"):
             messagebox.showerror("Game", reply[5:] if reply.startswith("-ERR ") else reply, parent=self.root)
         elif line.startswith("gamestart"):
+            tid = valid_tid(line.partition(" ")[2])
+            if tid:
+                self.cfg["game_history"] = remember_game(self.cfg.get("game_history"), tid)
+                self.save_cfg()
             self.status.config(text="The game is starting. Waiting for the daemon to restore Breeze and for PC connect to reconnect.")
         self.link.send("save")
 
