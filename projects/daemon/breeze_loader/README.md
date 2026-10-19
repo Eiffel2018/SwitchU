@@ -1,17 +1,15 @@
 # Breeze loader
 
-`main` and `main.npdm` are the exefs of Breeze's User Page loader
-(`switch/Breeze/profile_18.zip` → `atmosphere/contents/0100000000001013/exefs.nsp`,
-the Atmosphere 1.8+ build). It is nx-hbloader set to start
-`sdmc:/switch/breeze/breeze.nro`, falling back to `sdmc:/hbmenu.nro`, and its
-npdm carries the Album's program id (`0x010000000000100D`).
+`main` and `main.npdm` are a matched, rebuilt nx-hbloader pair for the
+Album program id (`0x010000000000100D`). Historical checked-in binaries came
+from Breeze's profile loader; they are not the build output to deploy.
+`xmake install` packages the rebuilt pair next to the daemon in
+`atmosphere/contents/0100000000001000/breeze_loader/`.
 
-`xmake install` copies it to
-`atmosphere/contents/0100000000001000/breeze_loader/`, next to the daemon, so a
-daemon-only install without the SwitchU menu can still start Breeze. With the
-`breeze_first` flag set and no User Page loader installed, the daemon registers
-this folder as the Album's code for as long as Breeze runs, the same way the
-SwitchU menu borrows the Album slot (see `smi::kBreezeAlbumLoaderDir`).
+The default and normal return target is `sdmc:/hbmenu.nro`. Breeze, DBI and
+other NROs are explicit one-shot/chainload targets. The daemon uses the same
+loader for its explicit hbmenu fallback and explicit Breeze HOME-toggle
+relaunch, so a different Album/User Page override cannot change those targets.
 
 ## Launching a requested NRO
 
@@ -31,10 +29,11 @@ the Album loader. Its 528-byte structure contains magic `0x534E524F`, version
 a 512-byte field. The loader removes and commits the request file before
 opening its target. Common arguments and the Album argument remain untouched.
 
-When no request exists, the loader opens `sdmc:/switch/breeze/breeze.nro` and
-falls back to `sdmc:/hbmenu.nro` only when Breeze is missing. An explicit
-request never falls back; malformed or failed NRO loads return a nonzero
-result. Paths containing spaces are quoted for the loaded NRO's `argv[0]`.
+When there is no request or chainload target, the loader opens
+`sdmc:/hbmenu.nro`. After any NRO exits without setting a next target it returns
+to hbmenu, including after Breeze. Explicit targets never fall back; malformed
+or failed NRO loads return a nonzero result. Paths with spaces are quoted in
+`argv[0]`. A missing hbmenu does not silently launch Breeze.
 
 After nx-hbloader validates and maps the requested NRO, it atomically writes a
 `SwitchUNroLaunchAck` to `config/SwitchU/nro-launch-ack.bin` immediately before

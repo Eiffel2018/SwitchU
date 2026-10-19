@@ -143,7 +143,7 @@ class GameHistoryTests(unittest.TestCase):
             menu.items[3]["command"]()
             self.assertEqual(app.link.sent, ["gamestart 0100000000002000"])
             app.on_game_reply("gamestart 0100000000002000", "+OK starting")
-            self.assertIn("Use Open Breeze", app.status.text)
+            self.assertIn("Waiting for the daemon to restore Breeze", app.status.text)
             self.assertNotIn("press HOME", app.status.text)
 
     @unittest.skipIf(pcconnect_app is None, "BreezePC source is only available on the configured PC")

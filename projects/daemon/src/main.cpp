@@ -2045,9 +2045,15 @@ static Result launchRequestedApplication() {
                                                   g_launchRequestFromApplet);
     if (R_SUCCEEDED(rc)) {
         noteApplicationLaunched();
-        // 6802 can explicitly reopen Breeze when its 6801 services are needed.
-        // Starting a game must not take the foreground back automatically.
-        cancelBreezeReturn("game started; Breeze reopen is explicit");
+        // Keep the PC game-start handoff. This return is tied to this game
+        // session; an explicit different-NRO launch still cancels it.
+        if (g_launchRequestFromBreeze) {
+            g_breezeReturnWaitLogged = false;
+            g_breezeRestoreTargetSessionId = daemon::app::snapshot().sessionId;
+            g_breezeLaunchHandoff.schedule(daemon::app::snapshot().sessionId,
+                                            armTicksToNs(armGetSystemTick()));
+            switchu::FileLog::log("[launch-request] Breeze return scheduled in 2s");
+        }
     }
     g_launchRequestFromBreeze = false;
     switchu::FileLog::log("[launch-request] rc=0x%X title=0x%016lX", rc,

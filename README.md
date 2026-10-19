@@ -33,24 +33,30 @@ With Breeze's HOME toggle enabled (No restart, Fast restart or Overlay), a
 returned by the system account list. Other launchers retain their user picker.
 Games that do not use accounts are launched without a preselected user.
 
-After a successful launch, the daemon waits two seconds, waits for AM to confirm
-the foreground transfer, and reopens Breeze. Boot, HOME and automatic returns prefer the
-dedicated Album loader bundled with the daemon over a User Page override that
-may belong to another homebrew. PC Connect can then reconnect without HOME.
-Failed launches are retried after two seconds until Breeze announces it is
-running. An in-progress loader is probed every two seconds and gets ten seconds
-to cold-start before it is closed and retried; applets are never opened in parallel.
-The delay does not block HOME, sleep or game-exit events.
-An explicit HOME action, a new launch or a changed application session cancels
-the automatic return. Startup applets defer each attempt for up to 15 seconds.
-Missing NRO/loader files, foreground failures and loader timeouts are recorded
-in `logs/SwitchU/daemon*.log`. A `BreezePC recovery v2` startup line identifies
-this build in a newly collected log.
+After a successful Breeze PC game start, the daemon still waits two seconds
+and reopens Breeze after AM confirms the foreground transfer. Retry/session
+fencing and first-user selection are unchanged. An explicit different-NRO
+launch cancels this automatic return, so it cannot replace hbmenu or DBI.
+AM identifies the requesting Breeze applet, not the individual TCP client.
 
-AM does not identify the TCP client: this policy applies to launch requests
-from the identified Breeze applet, the path used by BreezePC's Start game.
-It requires the normal Breeze NRO and loader installation; it does not install
-or enable PC Connect. Both `SwitchU.zip` and `home_daemon.zip` use this daemon.
+## Keeping hbmenu and Breeze separate
+
+Boot/exit/HOME uses the installed SwitchU menu, or explicitly opens
+`sdmc:/hbmenu.nro` when that menu is absent. The legacy `breeze_first` file no
+longer makes Breeze the default HOME. The bundled loader also returns to
+hbmenu after an NRO exits without `envSetNextLoad`; explicit targets from
+hbmenu or 6802 are preserved. A missing target fails rather than opening
+Breeze instead.
+
+Breeze is a separate NRO. Request `/switch/Breeze/Breeze.nro` when its 6801
+services are needed; 6802 remains available while it is closed. The existing
+HOME toggle for an active Breeze/game session remains available. Neither
+Breeze.nro nor the SD hbmenu.nro is replaced or patched. This still uses the
+SwitchU HOME replacement, not the original Nintendo HOME.
+
+Install both the new daemon and its rebuilt bundled loader, then reboot for
+this policy to take effect. Copying only the PC scripts cannot change the
+loader currently running on the console.
 
 Host policy check: `g++ -std=c++17 tests/breeze_launch_handoff_test.cpp -o /tmp/breeze-launch-handoff-test && /tmp/breeze-launch-handoff-test`.
 

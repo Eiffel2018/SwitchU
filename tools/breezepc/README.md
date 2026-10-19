@@ -32,6 +32,10 @@ not bundled.
 use authenticated TCP 6802 even when Breeze is closed. The daemon update must
 be installed and the Switch rebooted first. Game TID start/stop and the
 existing Breeze UI/file functions still use Breeze TCP 6801.
+Game start keeps the two-second automatic Breeze return for PC reconnection.
+Boot/exit defaults to the installed SwitchU menu or hbmenu, independently of
+Breeze; this requires the matching daemon/loader update and reboot. Explicit
+other-NRO launches cancel pending game-start returns.
 
 **Start game → Enter TID...** accepts a nonzero 16-digit hexadecimal title ID
 (with an optional `0x` prefix), even when the recent-game list is empty.

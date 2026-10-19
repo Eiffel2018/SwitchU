@@ -175,14 +175,9 @@ static constexpr const char* kBreezeRunningFlag    = "sdmc:/config/SwitchU/breez
 // HOME closes the applet and opens the SwitchU menu, whatever the toggle says.
 // Removed on use and whenever a Breeze applet starts or closes.
 static constexpr const char* kBreezeOpenMenuFlag   = "sdmc:/config/SwitchU/breeze_open_switchu";
-// Breeze first (fork-only): with this file present, HOME is Breeze. The daemon
-// opens Breeze at boot and wherever it would open the SwitchU menu, and reopens
-// it when it closes with no game running. The SwitchU menu is reached only
-// through Breeze's SwitchU button. Breeze starts through the User Page loader
-// when installed (kBreezeUserPageLoaderPath), otherwise the Album slot borrows
-// the loader shipped with the fork (kBreezeAlbumLoaderDir), like the menu does.
-// The loader sits next to the daemon, not in switch/SwitchU, so a daemon-only
-// install (no SwitchU menu) can still start Breeze.
+// Legacy Breeze-first marker, kept for compatibility/diagnostic reads only.
+// Current boot/exit HOME does not redirect to Breeze. The bundled loader
+// defaults/returns to hbmenu and uses explicit paths for other NROs.
 static constexpr const char* kBreezeFirstFlag          = "sdmc:/config/SwitchU/breeze_first";
 static constexpr const char* kBreezeNroPath            = "sdmc:/switch/Breeze/Breeze.nro";
 static constexpr const char* kBreezeUserPageLoaderPath = "sdmc:/atmosphere/contents/0100000000001013/exefs.nsp";
