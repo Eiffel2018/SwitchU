@@ -1169,7 +1169,7 @@ class App:
         win = tk.Toplevel(self.root)
         win.title("SwitchU Controller")
         win.resizable(False, False)
-        win.geometry("800x830")
+        win.geometry("800x870")
         self.switchu_controller = win
         self.switchu_input_buttons = []
         self.switchu_input_canvases = []
