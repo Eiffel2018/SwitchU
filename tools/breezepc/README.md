@@ -120,8 +120,8 @@ Breeze tile also launched Breeze without A. Applications may
 interpret the same raw touch differently; no extra A or 6801 button command
 is inserted into a gesture. No acquire/release lease was added.
 
-### Candidate: direct game start and chords on 6802
+### Direct game start and chords on 6802
 
 Start game (history or Enter TID) uses authenticated `gamestart TID` on 6802 without requiring Breeze. The TID must be 16 nonzero hexadecimal digits and an installed application record. A running game is rejected, rather than silently replaced. Status uses the same request ID as NRO launch: queued/launching/started/failed. `started` confirms the application launch calls succeeded, not that its title screen or save loaded. First system account selection and the session-bound two-second Breeze restore are retained. No automatic retry or fallback to 6801 follows an unknown outcome; original 6801 commands remain supported.
 
-SwitchU controls also provides a Chord field: 2–4 distinct ordinary buttons, e.g. `L+R` or `ZL+ZR+A+B`. The daemon applies one combined mask to one virtual controller for 100 ms, then releases every button and detaches as before. HOME/Capture/rail operations remain individual commands. This does not add a persistent P1 device. Requires the matching candidate daemon; physical acceptance is pending.
+SwitchU controls also provides a Chord field: 2–4 distinct ordinary buttons, e.g. `L+R` or `ZL+ZR+A+B`. The daemon applies one combined mask to one virtual controller for 100 ms, then releases every button and detaches as before. HOME/Capture/rail operations remain individual commands. This does not add a persistent P1 device. Requires daemon `5f77070` or later. This cohort passed native CI and physical GK2 title-menu, Probe chord/release and 26-control checks; see REMOTE_CONTROL_ACCEPTANCE.md. On this console the background launchable event was unavailable, so automatic Breeze restore used the foreground compatibility path and returned foreground to the game.
