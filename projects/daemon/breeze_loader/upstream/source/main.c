@@ -7,9 +7,8 @@
 #include <unistd.h>
 
 #include "../../nro_launch_input.h"
+#include "../../nro_launch_policy.h"
 
-#define DEFAULT_NRO "sdmc:/switch/breeze/breeze.nro"
-#define FALLBACK_NRO "sdmc:/hbmenu.nro"
 
 const char g_noticeText[] =
     "nx-hbloader " VERSION "\0"
@@ -502,10 +501,9 @@ void loadNro(void)
             abortNroLoad(rc);
     }
 
-    if (g_nextNroPath[0] == '\0') {
-        memcpy(g_nextNroPath, DEFAULT_NRO, sizeof(DEFAULT_NRO));
-        memcpy(g_nextArgv, DEFAULT_NRO, sizeof(DEFAULT_NRO));
-    }
+    if (!switchuDefaultNextNro(g_nextNroPath, sizeof(g_nextNroPath),
+                              g_nextArgv, sizeof(g_nextArgv)))
+        abortNroLoad(MAKERESULT(Module_HomebrewLoader, 3));
 
     memcpy(g_argv, g_nextArgv, sizeof g_argv);
 
@@ -518,13 +516,6 @@ void loadNro(void)
     uint8_t*   rest   = (uint8_t*)   (nrobuf + sizeof(NroStart) + sizeof(NroHeader));
 
     int fd = open(g_nextNroPath, O_RDONLY);
-    if (fd < 0 && !g_hasRequestedNro && errno == ENOENT &&
-        strcmp(g_nextNroPath, DEFAULT_NRO) == 0) {
-        memcpy(g_nextNroPath, FALLBACK_NRO, sizeof(FALLBACK_NRO));
-        memcpy(g_nextArgv, FALLBACK_NRO, sizeof(FALLBACK_NRO));
-        memcpy(g_argv, g_nextArgv, sizeof(g_argv));
-        fd = open(g_nextNroPath, O_RDONLY);
-    }
     if (fd < 0)
         abortNroLoad(MAKERESULT(Module_HomebrewLoader, 3));
 

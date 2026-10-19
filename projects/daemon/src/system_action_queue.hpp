@@ -18,7 +18,8 @@ enum class SystemActionType : std::uint32_t {
     OpenNetConnect,
     OpenUserPage,
     OpenUserCreator,
-    OpenBreeze,  // daemon-internal: Breeze as HOME (breeze_first) or a Breeze relaunch
+    OpenBreeze,  // explicit HOME toggle relaunch of the previous Breeze session
+    OpenHbmenu, // daemon-only HOME fallback, independent of Album overrides
 };
 
 struct SystemAction {

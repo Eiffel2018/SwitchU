@@ -2026,7 +2026,7 @@ class App:
             if tid:
                 self.cfg["game_history"] = remember_game(self.cfg.get("game_history"), tid)
                 self.save_cfg()
-            self.status.config(text="The game is starting. Waiting for the daemon to restore Breeze and for PC connect to reconnect.")
+            self.status.config(text="The game is starting. Use Open Breeze when you need to reconnect PC connect.")
         self.link.send("save")
 
     def redirect_on(self):

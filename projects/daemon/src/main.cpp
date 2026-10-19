@@ -309,9 +309,6 @@ static bool g_breezeSession = false;         // that applet announced itself as 
 static bool g_breezeDirect = false;          // the slot boots Breeze itself (User Page or
                                              // Album loader), so the daemon can relaunch it
 static const char* g_breezeSlotName = "Album";
-static bool g_breezeMenuRequested = false;   // Breeze's SwitchU button: open the menu once it closes
-static int g_breezeFastExits = 0;            // breeze_first: Breeze closed at once, in a row
-static bool g_breezeFirstFallback = false;   // breeze_first gave up after repeated fast exits
 static AccountUid g_breezeUid{};
 static bool g_breezeHidden = false;          // keep: game in front, Breeze held behind it
 static bool g_breezeResumeOnClose = false;   // restart: resume the game once Breeze closed
@@ -1190,7 +1187,6 @@ static void beginBreezeCandidate(bool direct, AccountUid uid, const char* slotNa
     g_breezeSession = false;
     g_breezeDirect = direct;
     g_breezeSlotName = slotName;
-    g_breezeMenuRequested = false;
     g_breezeUid = uid;
     g_breezeHidden = false;
     g_breezeResumeOnClose = false;
@@ -1319,7 +1315,6 @@ static bool handleBreezeHome(const char* source) {
         if (daemon::app::isRunning() && daemon::app::hasForeground())
             takeForegroundFromRunningApp(source);
         g_breezeHidden = false;
-        g_breezeMenuRequested = true;
         g_pendingForegroundAppletHome = true;
         breezeOverlayTrace("%s HOME: SwitchU button used; closing Breeze for the SwitchU menu", source);
         return true;
@@ -1527,14 +1522,6 @@ static bool breezeCanStart() {
             breezeAlbumLoaderReady());
 }
 
-// HOME is Breeze with smi::kBreezeFirstFlag, and also when the SwitchU menu
-// isn't installed at all, so the console always has something to show.
-static bool breezeIsHome() {
-    if (g_breezeFirstFallback || !breezeCanStart())
-        return false;
-    return breezeFlagExists(smi::kBreezeFirstFlag) || !menuInstalled();
-}
-
 static Result queueBreeze(AccountUid uid, const char* source, uint64_t returnSessionId = 0) {
     if (g_foregroundAppletActive && g_breezeCandidate) {
         switchu::FileLog::log("[%s] Breeze already open; not queued again", source);
@@ -1566,14 +1553,12 @@ static void retryBreezeReturn(uint64_t sessionId, const char* reason) {
 static constexpr uint64_t kHomeFallbackIntervalNs = 3'000'000'000ULL;
 static constexpr int kHomeFallbackCooldownTicks = 300;  // ~3 s of fast main-loop ticks
 
-// Everywhere the daemon shows HOME: the SwitchU menu, or Breeze (breeze_first).
+// HOME uses the SwitchU menu, or a real hbmenu when no menu is installed.
+// The legacy breeze_first flag no longer redirects boot/exit/HOME to Breeze.
 static Result openHome(smi::MenuStartMode mode, const char* source) {
-    if (breezeIsHome())
-        return queueBreeze(g_breezeUid, source);
     if (!menuInstalled()) {
-        // Last resort: the plain Album, where Atmosphere's hbmenu runs, instead
-        // of a black screen. At most one every few seconds, so an Album that
-        // closes at once isn't reopened in a tight loop.
+        // Use an explicit path so a separate Album override cannot redirect
+        // this fallback to Breeze. Rate-limit a missing/broken hbmenu.
         static uint64_t s_lastFallbackTick = 0;
         if (g_foregroundAppletActive || !g_actionQueue.empty())
             return 0;
@@ -1587,17 +1572,13 @@ static Result openHome(smi::MenuStartMode mode, const char* source) {
         }
         s_lastFallbackTick = now;
         daemon::SystemAction action{};
-        action.type = daemon::SystemActionType::OpenAlbum;
+        action.type = daemon::SystemActionType::OpenHbmenu;
         const Result rc = g_actionQueue.enqueue(action);
-        switchu::FileLog::log("[%s] no SwitchU menu and Breeze can't start; opening the Album rc=0x%X",
+        switchu::FileLog::log("[%s] no SwitchU menu; opening hbmenu rc=0x%X",
                               source, rc);
         return rc;
     }
     const Result rc = daemon::menu_la::launch(mode, buildSystemStatus());
-    if (R_FAILED(rc) && !g_breezeFirstFallback && breezeCanStart()) {
-        switchu::FileLog::log("[%s] menu launch FAIL 0x%X; opening Breeze instead", source, rc);
-        return queueBreeze(g_breezeUid, source);
-    }
     return rc;
 }
 
@@ -1651,7 +1632,7 @@ static Result launchPendingHomeMenu() {
         }
     }
 
-    if (breezeIsHome() || !menuInstalled()) {
+    if (!menuInstalled()) {
         const Result homeRc = openHome(smi::MenuStartMode::MainMenu, source);
         logHomeState(source, "after");
         return homeRc;
@@ -1759,14 +1740,6 @@ static void openMenuFromHome(const char* source) {
 
     if (handleBreezeHome(source))
         return;
-
-    // breeze_first: Breeze is already HOME. Reopening it would only restart it;
-    // hbmenu left after Breeze's Exit still closes, and Breeze comes back.
-    if (g_foregroundAppletActive && g_breezeSession && !daemon::app::isRunning() &&
-        breezeIsHome() && breezeFlagExists(smi::kBreezeRunningFlag)) {
-        switchu::FileLog::log("[%s] HOME ignored: Breeze is HOME", source);
-        return;
-    }
 
     if (daemon::app::isRunning() && daemon::app::hasForeground()) {
         if (!takeForegroundFromRunningApp(source)) {
@@ -2072,13 +2045,9 @@ static Result launchRequestedApplication() {
                                                   g_launchRequestFromApplet);
     if (R_SUCCEEDED(rc)) {
         noteApplicationLaunched();
-        if (g_launchRequestFromBreeze) {
-            g_breezeReturnWaitLogged = false;
-            g_breezeRestoreTargetSessionId = daemon::app::snapshot().sessionId;
-            g_breezeLaunchHandoff.schedule(daemon::app::snapshot().sessionId,
-                                            armTicksToNs(armGetSystemTick()));
-            switchu::FileLog::log("[launch-request] Breeze return scheduled in 2s");
-        }
+        // 6802 can explicitly reopen Breeze when its 6801 services are needed.
+        // Starting a game must not take the foreground back automatically.
+        cancelBreezeReturn("game started; Breeze reopen is explicit");
     }
     g_launchRequestFromBreeze = false;
     switchu::FileLog::log("[launch-request] rc=0x%X title=0x%016lX", rc,
@@ -2340,6 +2309,16 @@ static void pumpBreezeAppletMessages() {
                 g_breezeHidden = false;
             breezeOverlayTrace("overlay closed by Breeze; applet back in front");
         }
+    }
+
+    // The loader can remain alive after Breeze exits into hbmenu/another NRO.
+    // Do not keep treating that different NRO as a Breeze HOME session.
+    if (g_breezeOverlay == BreezeOverlayState::None &&
+        !breezeFlagExists(smi::kBreezeRunningFlag)) {
+        g_breezeSession = false;
+        g_breezeDirect = false;
+        g_breezeOverlayCapable = false;
+        g_breezeRelaunchPending = false;
     }
 
     // mainLoop is blocked while the applet runs, so watch the game here.
@@ -2797,7 +2776,7 @@ static Result relaunchMenuAfterApplet(const char* appletName) {
     if (!menuInstalled() && !g_launchRequestPending) {
         // No menu to return to: the Album closing with a game suspended goes
         // back to the game, as HOME in the SwitchU menu would.
-        if (!breezeIsHome() && daemon::app::isRunning()) {
+        if (daemon::app::isRunning()) {
             const Result resumeRc = daemon::app::resume();
             switchu::FileLog::log("[action] %s closed, no menu; resume game rc=0x%X",
                                   appletName, resumeRc);
@@ -2820,19 +2799,51 @@ static Result relaunchMenuAfterApplet(const char* appletName) {
     return rc;
 }
 
-// Breeze in the Album slot, which runs the loader shipped with the fork
-// (smi::kBreezeAlbumLoaderDir) for as long as Breeze is open, the same way the
-// SwitchU menu borrows it.
-static Result launchBreezeInAlbum() {
+static void clearNroLaunchFiles() {
+    ::remove(SWITCHU_NRO_REQUEST_PATH);
+    ::remove(SWITCHU_NRO_ACK_PATH);
+    ::remove(SWITCHU_NRO_ACK_TMP_PATH);
+}
+
+static bool writeNroLaunchInput(uint64_t requestId, const char* path) {
+    SwitchUNroLaunchInput input{};
+    input.magic = SWITCHU_NRO_LAUNCH_MAGIC;
+    input.version = SWITCHU_NRO_LAUNCH_VERSION;
+    input.requestId = requestId;
+    if (!requestId || !path || std::strlen(path) >= sizeof(input.path))
+        return false;
+    std::snprintf(input.path, sizeof(input.path), "%s", path);
+    clearNroLaunchFiles();
+    bool written = false;
+    if (FILE* file = std::fopen(SWITCHU_NRO_REQUEST_PATH, "wb")) {
+        const bool complete = std::fwrite(&input, 1, sizeof(input), file) == sizeof(input);
+        const int flushed = std::fflush(file);
+        const int closed = std::fclose(file);
+        written = complete && flushed == 0 && closed == 0 && commitSdCard("nro-launch-request");
+    }
+    if (!written)
+        clearNroLaunchFiles();
+    return written;
+}
+
+// Use the same bundled loader, but request the actual target explicitly.
+// Its default/return path is hbmenu, never Breeze.
+static Result launchNroInAlbum(const char* path, const char* name) {
     Result rc = daemon::registerExternalContent(smi::kMenuTakeoverProgramId,
                                                 smi::kBreezeAlbumLoaderDir);
     if (R_FAILED(rc)) {
         switchu::FileLog::log("[breeze] Album loader registration FAIL: 0x%X", rc);
         return rc;
     }
+    const uint64_t id = std::max<uint64_t>(1, armGetSystemTick());
+    if (!writeNroLaunchInput(id, path)) {
+        daemon::unregisterExternalContent(smi::kMenuTakeoverProgramId);
+        return MAKERESULT(Module_Libnx, LibnxError_BadInput);
+    }
     const u8 albumArg = AlbumLaArg_ShowAllAlbumFilesForHomeMenu;
-    rc = launchLibraryApplet(AppletId_LibraryAppletPhotoViewer, "Album(Breeze)",
+    rc = launchLibraryApplet(AppletId_LibraryAppletPhotoViewer, name,
                              &albumArg, sizeof(albumArg), 0x10000, true);
+    clearNroLaunchFiles();
     const Result unregisterRc = daemon::unregisterExternalContent(smi::kMenuTakeoverProgramId);
     if (R_FAILED(unregisterRc))
         switchu::FileLog::log("[breeze] Album loader unregister FAIL: 0x%X", unregisterRc);
@@ -2920,27 +2931,12 @@ static bool processRemoteNroRequest() {
     }
 
     const auto request = g_remoteNroRequest;
-    SwitchUNroLaunchInput input{};
-    input.magic = SWITCHU_NRO_LAUNCH_MAGIC;
-    input.version = SWITCHU_NRO_LAUNCH_VERSION;
-    input.requestId = request.id;
-    std::snprintf(input.path, sizeof(input.path), "%s", request.path.c_str());
     Result rc = daemon::registerExternalContent(smi::kMenuTakeoverProgramId, smi::kBreezeAlbumLoaderDir);
     if (R_FAILED(rc)) {
         fail(rc);
         return true;
     }
-    ::remove(SWITCHU_NRO_REQUEST_PATH);
-    ::remove(SWITCHU_NRO_ACK_PATH);
-    ::remove(SWITCHU_NRO_ACK_TMP_PATH);
-    bool written = false;
-    if (FILE* file = std::fopen(SWITCHU_NRO_REQUEST_PATH, "wb")) {
-        const bool complete = std::fwrite(&input, 1, sizeof(input), file) == sizeof(input);
-        const int flushed = std::fflush(file);
-        const int closed = std::fclose(file);
-        written = complete && flushed == 0 && closed == 0 && commitSdCard("remote-nro-request");
-    }
-    if (!written) {
+    if (!writeNroLaunchInput(request.id, request.path.c_str())) {
         ::remove(SWITCHU_NRO_REQUEST_PATH);
         daemon::unregisterExternalContent(smi::kMenuTakeoverProgramId);
         fail(MAKERESULT(Module_Libnx, LibnxError_BadInput));
@@ -2994,41 +2990,13 @@ static bool processRemoteNroRequest() {
     return true;
 }
 
-static constexpr uint64_t kBreezeFastExitNs = 3'000'000'000ULL;
-static constexpr int kBreezeFastExitLimit = 3;
-
-// A daemon-opened Breeze closed and the toggle didn't hand over to the game.
-static void afterBreezeHomeClosed(Result rc, uint64_t runtimeNs) {
-    const bool menuRequested = g_breezeMenuRequested;
-    g_breezeMenuRequested = false;
+// Closing an explicitly opened Breeze never makes it the default HOME.
+static void afterBreezeHomeClosed() {
     if (g_launchRequestPending) {
         switchu::FileLog::log("[breeze] closed; HOME skipped for requested launch");
         return;
     }
-    if ((menuRequested && menuInstalled()) || !breezeIsHome()) {
-        relaunchMenuAfterApplet("Breeze");
-        return;
-    }
-    if (daemon::app::isRunning()) {
-        const Result resumeRc = daemon::app::resume();
-        switchu::FileLog::log("[breeze] closed; resume game rc=0x%X", resumeRc);
-        if (R_SUCCEEDED(resumeRc))
-            return;
-    }
-
-    if (R_FAILED(rc) || runtimeNs < kBreezeFastExitNs)
-        ++g_breezeFastExits;
-    else
-        g_breezeFastExits = 0;
-    if (g_breezeFastExits >= kBreezeFastExitLimit) {
-        g_breezeFastExits = 0;
-        g_breezeFirstFallback = true;
-        switchu::FileLog::log("[breeze] closed %d times at once; SwitchU menu is HOME until reboot",
-                              kBreezeFastExitLimit);
-        openHome(smi::MenuStartMode::MainMenu, "breeze-fallback");
-        return;
-    }
-    queueBreeze(g_breezeUid, "breeze-closed");
+    relaunchMenuAfterApplet("Breeze");
 }
 
 static bool handleAction(daemon::SystemAction& action) {
@@ -3062,6 +3030,16 @@ static bool handleAction(daemon::SystemAction& action) {
                 switchu::FileLog::log("[action] resume FAIL: 0x%X", rc);
                 openHome(smi::MenuStartMode::MainMenu, "action-resume");
             }
+            return true;
+        }
+
+        case daemon::SystemActionType::OpenHbmenu: {
+            beginBreezeCandidate(false, AccountUid{}, "hbmenu NRO");
+            const Result rc = launchNroInAlbum(SWITCHU_HBMENU_NRO_PATH, "Album(hbmenu)");
+            if (R_FAILED(rc))
+                switchu::FileLog::log("[action] hbmenu FAIL: 0x%X", rc);
+            if (!finishBreezeApplet("hbmenu"))
+                relaunchMenuAfterApplet("hbmenu");
             return true;
         }
 
@@ -3148,18 +3126,15 @@ static bool handleAction(daemon::SystemAction& action) {
                 switchu::FileLog::log("[breeze-return] queued return discarded: application session changed");
                 return true;
             }
-            const bool userPage = daemon::useBreezeUserPage(automaticReturn,
-                breezeAlbumLoaderReady(), breezeFlagExists(smi::kBreezeUserPageLoaderPath));
             const AccountUid uid = resolveUser(action.uid);
-            beginBreezeCandidate(true, uid, userPage ? "User Page" : "Album loader");
+            beginBreezeCandidate(true, uid, "explicit Breeze NRO");
             switchu::FileLog::log("[breeze] opening Breeze via %s", g_breezeSlotName);
             const uint64_t startedAt = armGetSystemTick();
             g_breezeReturnAttemptSessionId = action.breezeReturnSessionId;
             g_breezeReturnAttemptStartedAt = startedAt;
             g_breezeReturnLastProbeAt = 0;
             g_breezeReturnAttemptTimedOut = false;
-            const Result rc = userPage ? launchUserProfile(uid) : launchBreezeInAlbum();
-            const uint64_t runtimeNs = armTicksToNs(armGetSystemTick() - startedAt);
+            const Result rc = launchNroInAlbum(smi::kBreezeNroPath, "Album(Breeze)");
             if (R_FAILED(rc))
                 switchu::FileLog::log("[action] Breeze FAIL: 0x%X", rc);
             const bool handedOver = finishBreezeApplet("Breeze");
@@ -3172,7 +3147,7 @@ static bool handleAction(daemon::SystemAction& action) {
                 return true;
             }
             if (!handedOver)
-                afterBreezeHomeClosed(rc, runtimeNs);
+                afterBreezeHomeClosed();
             return true;
         }
 
@@ -3744,7 +3719,7 @@ int main(int argc, char* argv[]) {
             switchu::FileLog::log("[daemon] fork marker write failed");
         }
     }
-    switchu::FileLog::log("[daemon] opening HOME (breeze_first=%d menu=%d breeze=%d)",
+    switchu::FileLog::log("[daemon] opening HOME (legacy_breeze_first_ignored=%d menu=%d breeze=%d)",
                           breezeFlagExists(smi::kBreezeFirstFlag) ? 1 : 0,
                           menuInstalled() ? 1 : 0, breezeCanStart() ? 1 : 0);
     rc = openHome(smi::MenuStartMode::StartupBoot, "boot");
