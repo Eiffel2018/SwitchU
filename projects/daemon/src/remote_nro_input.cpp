@@ -30,8 +30,14 @@ HiddbgHdlsSessionId g_session{};
 HiddbgHdlsHandle g_handle{};
 void* g_workBuffer = nullptr;
 
-bool isOneAllowedButton(u64 mask) {
-    return mask != 0 && (mask & ~kAllowedButtons) == 0 && (mask & (mask - 1)) == 0;
+bool isAllowedButtonMask(u64 mask) {
+    if (!mask || (mask & ~kAllowedButtons)) return false;
+    if ((mask & (mask - 1)) == 0) return true;
+    // HOME/Capture and rail operations remain individual commands.
+    if (mask & ~0xFFFFULL) return false;
+    unsigned count = 0;
+    for (; mask; mask &= mask - 1) ++count;
+    return count <= 4;
 }
 
 HiddbgHdlsDeviceInfo makeDeviceInfo() {
@@ -160,7 +166,7 @@ Result applyStateFor(const HiddbgHdlsState& pressed, u32 holdMs) {
 } // namespace
 
 Result pressButton(u64 button, u32 holdMs) {
-    if (!isOneAllowedButton(button) || holdMs == 0 || holdMs > kMaxHoldMs)
+    if (!isAllowedButtonMask(button) || holdMs == 0 || holdMs > kMaxHoldMs)
         return MAKERESULT(Module_Libnx, LibnxError_BadInput);
     return applyStateFor(makeState(button), holdMs);
 }

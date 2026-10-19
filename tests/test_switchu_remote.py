@@ -72,6 +72,15 @@ class SwitchURemoteTests(unittest.TestCase):
             remote.start_game("127.0.0.1", "1234", "0100005027A18000", port=lost.port)
         self.assertEqual(lost.commands, ["gamestart 0100005027A18000"])
 
+    def test_chord_validation_and_single_request(self):
+        server = self.with_server(command_reply="OK pressed ZL+ZR+A+B ms=100")
+        remote.press_button("127.0.0.1", "1234", "ZL+ZR+A+B", port=server.port)
+        self.assertEqual(server.commands, ["press ZL+ZR+A+B 100"])
+        for bad in ("A+A", "A+B+X+Y+L", "HOME+A", "L++R", "L+"):
+            with self.assertRaises(ValueError): remote.validate_input(bad, 100)
+        for bad in ("0000000000000000", "0x0100005027A18000", "0100005027A1800Z"):
+            with self.assertRaises(ValueError): remote.validate_tid(bad)
+
     def test_capture_reads_exact_binary_after_header(self):
         jpeg = b"\xff\xd8binary\nframe\xff\xd9"
         server = self.with_server(command_reply="OK capture bytes=%d width=1280 height=720 format=jpeg" % len(jpeg), payload=jpeg)

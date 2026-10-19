@@ -167,6 +167,15 @@ void svcSleepThread(u64 ns) { events.emplace_back("sleep"); sleeps.push_back(ns)
 int main() {
     bool ok = true;
     ok = successButtonPulse() && ok;
+    reset();
+    ok = check(switchu::remote_input::pressButton(0x303, 100) == 0,
+               "four simultaneous buttons accepted") && ok;
+    ok = check(states.size() == 3 && states[0].buttons == 0 && states[1].buttons == 0x303
+               && states[2].buttons == 0, "one chord state then all buttons released") && ok;
+    reset();
+    ok = check(switchu::remote_input::pressButton(0x1F, 100) != 0
+               && switchu::remote_input::pressButton((1ULL << 18) | 1, 100) != 0
+               && events.empty(), "invalid chord does not attach a controller") && ok;
     ok = successStickPulse() && ok;
     ok = initFailureHasNoCleanupCalls() && ok;
     ok = stateFailureStillCleansUp() && ok;

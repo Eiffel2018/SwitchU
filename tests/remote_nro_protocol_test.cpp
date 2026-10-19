@@ -12,6 +12,11 @@ int main() {
          "gamestart 0100005027A180000", "gamestart 0x0100005027A18000",
          "gamestart 0100005027A1800Z", "gamestart 0100005027A18000 extra"})
         assert(parseCommand(bad).kind == CommandKind::Invalid);
+    assert(parseCommand("press L+R 100").buttonMask == ((1ULL << 6) | (1ULL << 7)));
+    assert(parseCommand("press ZL+ZR+A+B 100").buttonMask == 0x303);
+    for (const char* bad : {"press L+L 100", "press A+B+X+Y+L 100", "press HOME+A 100",
+         "press L+ 100", "press +R 100", "press L++R 100", "press A+CAPTURE 100"})
+        assert(parseCommand(bad).kind == CommandKind::Invalid);
     assert(parseCommand("capture").kind == CommandKind::Capture);
     assert(parseCommand("capture extra").kind == CommandKind::Invalid);
     for (const char* stack : {"0", "1", "2", "3", "4", "6"}) {
@@ -38,7 +43,7 @@ int main() {
         assert(parseCommand("press RSR 100").buttonMask == (1ULL << 27));
         for (const char* bad : {"press A 0", "press A 1001", "press A -1",
              "press A 999999999999999999999", "press A 100x", "press A 100 extra",
-             "press A ", "press SYNC 100", "press A+B 100", "press a 100"})
+             "press A ", "press SYNC 100", "press a 100"})
             assert(parseCommand(bad).kind == CommandKind::Invalid);
     }
     {

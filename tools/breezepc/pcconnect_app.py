@@ -1181,6 +1181,14 @@ class App:
         self.switchu_resume_btn = tk.Button(command_bar, text="Resume input",
                                             command=self.resume_switchu_controller)
         self.switchu_resume_btn.pack(side="left", padx=3)
+        chord_bar = tk.Frame(win)
+        chord_bar.pack(fill="x", padx=12, pady=4)
+        tk.Label(chord_bar, text="Chord (up to 4):").pack(side="left")
+        self.switchu_chord = tk.StringVar(value="L+R")
+        tk.Entry(chord_bar, textvariable=self.switchu_chord, width=22).pack(side="left", padx=4)
+        chord_send = tk.Button(chord_bar, text="Send together", command=self.send_switchu_chord)
+        chord_send.pack(side="left")
+        self.switchu_input_buttons.append(chord_send)
         touch_bar = tk.Frame(win)
         touch_bar.pack(fill="x", padx=12, pady=4)
         tk.Checkbutton(touch_bar, text="Touch preview via 6802",
@@ -1359,6 +1367,15 @@ class App:
             self.switchu_controller = None
             self.switchu_input_buttons = []
             self.switchu_input_canvases = []
+
+    def send_switchu_chord(self):
+        chord = self.switchu_chord.get().strip().upper().replace(" ", "")
+        try:
+            switchu_remote.validate_input(chord, 100)
+        except ValueError as exc:
+            self.status.config(text=str(exc))
+            return
+        self.send_switchu_button(chord)
 
     def send_switchu_button(self, button):
         if self.switchu_controller_state != "enabled" or self.switchu_controller_command_pending:

@@ -134,6 +134,24 @@ Command parseCommand(std::string_view line) {
             return {};
         constexpr const char* keys[] = {"A", "B", "X", "Y", "LSTICK", "RSTICK",
             "L", "R", "ZL", "ZR", "PLUS", "MINUS", "LEFT", "UP", "RIGHT", "DOWN"};
+        if (key.find('+') != std::string_view::npos) {
+            auto remaining = key;
+            std::uint64_t mask = 0;
+            unsigned count = 0;
+            while (!remaining.empty()) {
+                const auto end = remaining.find('+');
+                const auto part = remaining.substr(0, end);
+                std::uint64_t bit = 0;
+                for (unsigned i = 0; i < 16; ++i)
+                    if (part == keys[i]) bit = 1ULL << i;
+                if (!bit || (mask & bit) || ++count > 4) return {};
+                mask |= bit;
+                if (end == std::string_view::npos) break;
+                remaining.remove_prefix(end + 1);
+                if (remaining.empty()) return {};
+            }
+            return {CommandKind::Press, std::string(key), ms, mask};
+        }
         for (unsigned i = 0; i < 16; ++i) {
             if (key == keys[i])
                 return {CommandKind::Press, std::string(key), ms, 1ULL << i};

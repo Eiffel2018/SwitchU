@@ -47,8 +47,14 @@ INPUT_BUTTONS = frozenset((
 
 
 def validate_input(button: str, duration_ms: int) -> tuple[str, int]:
-    if not isinstance(button, str) or button not in INPUT_BUTTONS:
+    if not isinstance(button, str):
         raise ValueError("unsupported Switch button")
+    keys = button.split("+")
+    chord_keys = INPUT_BUTTONS - {"HOME", "CAPTURE", "LSL", "LSR", "RSL", "RSR"}
+    if (button not in INPUT_BUTTONS and
+            (not 2 <= len(keys) <= 4 or len(set(keys)) != len(keys)
+             or any(key not in chord_keys for key in keys))):
+        raise ValueError("use one button or 2..4 distinct ordinary buttons")
     if (isinstance(duration_ms, bool) or not isinstance(duration_ms, int)
             or not 1 <= duration_ms <= 1000):
         raise ValueError("button duration must be between 1 and 1000 ms")
