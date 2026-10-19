@@ -7,7 +7,7 @@ namespace switchu::remote_input {
 // Creates a temporary virtual controller for one bounded input pulse and
 // tears down all owned HDLS resources before returning. The returned libnx
 // Result is the first failure, or 0.
-// Accepts ordinary game/UI, HOME/Capture, and the four Joy-Con rail buttons.
+// Accepts up to four ordinary buttons together, or one HOME/Capture/rail button.
 Result pressButton(u64 button, u32 holdMs);
 
 // Bounded analog impulse; positive Y is up. Both axes return to center before

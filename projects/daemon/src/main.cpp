@@ -2914,7 +2914,9 @@ static Result launchNroInAlbum(const char* path, const char* name,
                                LibAppletMode mode = LibAppletMode_AllForeground) {
     if (mode == LibAppletMode_Background) {
         Handle handle = INVALID_HANDLE;
-        Result rc = serviceDispatch(appletGetServiceSession_SelfController(), 9,
+        Service* self = appletGetServiceSession_SelfController();
+        serviceAssumeDomain(self);
+        Result rc = serviceDispatch(self, 9,
             .out_handle_attrs = { SfOutHandleAttr_HipcCopy },
             .out_handles = &handle);
         if (R_FAILED(rc))
