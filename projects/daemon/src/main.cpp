@@ -2891,6 +2891,23 @@ static bool writeNroLaunchInput(uint64_t requestId, const char* path) {
 // Its default/return path is hbmenu, never Breeze.
 static Result launchNroInAlbum(const char* path, const char* name,
                                LibAppletMode mode = LibAppletMode_AllForeground) {
+    if (mode == LibAppletMode_Background) {
+        Handle handle = INVALID_HANDLE;
+        Result rc = serviceDispatch(appletGetServiceSession_SelfController(), 9,
+            .out_handle_attrs = { SfOutHandleAttr_HipcCopy },
+            .out_handles = &handle);
+        if (R_FAILED(rc))
+            return rc;
+        Event launchable{};
+        eventLoadRemote(&launchable, handle, false);
+        rc = eventWait(&launchable, 0);
+        eventClose(&launchable);
+        // libnx otherwise waits UINT64_MAX here, including Background mode.
+        if (R_FAILED(rc)) {
+            switchu::FileLog::logCommit("[breeze-return] background not launchable rc=0x%X; using fallback", rc);
+            return rc;
+        }
+    }
     Result rc = daemon::registerExternalContent(smi::kMenuTakeoverProgramId,
                                                 smi::kBreezeAlbumLoaderDir);
     if (R_FAILED(rc)) {
