@@ -6,6 +6,12 @@
 using namespace switchu::daemon::remote;
 
 int main() {
+    const auto game = parseCommand("gamestart 0100005027a18000");
+    assert(game.kind == CommandKind::StartGame && game.titleId == 0x0100005027A18000ULL);
+    for (const char* bad : {"gamestart 0000000000000000", "gamestart 0100005027A1800",
+         "gamestart 0100005027A180000", "gamestart 0x0100005027A18000",
+         "gamestart 0100005027A1800Z", "gamestart 0100005027A18000 extra"})
+        assert(parseCommand(bad).kind == CommandKind::Invalid);
     assert(parseCommand("capture").kind == CommandKind::Capture);
     assert(parseCommand("capture extra").kind == CommandKind::Invalid);
     for (const char* stack : {"0", "1", "2", "3", "4", "6"}) {

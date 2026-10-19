@@ -123,6 +123,7 @@ class GameHistoryTests(unittest.TestCase):
         app.save_tid = ""
         app.save = {"game_running": False}
         app.link = FakeLink()
+        app.send_switchu_game = Mock(side_effect=lambda tid: app.link.send("gamestart " + tid))
         app.status = FakeLabel()
         app.save_cfg = Mock()
         return app

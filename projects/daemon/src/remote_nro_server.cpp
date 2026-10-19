@@ -48,6 +48,8 @@ bool g_busy = false;
 std::uint64_t g_nextId = 1;
 std::uint64_t g_currentId = 0;
 std::string g_path;
+RequestKind g_kind = RequestKind::Nro;
+std::uint64_t g_titleId = 0;
 std::string g_state = "idle";
 std::uint32_t g_result = 0;
 std::string g_code;
@@ -263,7 +265,7 @@ void answerError(int fd, const char* reason) {
                       "protocol-error-response");
 }
 
-bool queueLaunch(int fd, const std::string& path) {
+bool queueLaunch(int fd, const std::string& path, std::uint64_t titleId = 0) {
     std::uint64_t id = 0;
     void (*wake)() = nullptr;
     bool isBusy = false;
@@ -276,6 +278,8 @@ bool queueLaunch(int fd, const std::string& path) {
                 g_nextId = 1;
             g_currentId = id;
             g_path = path;
+            g_kind = titleId ? RequestKind::StartGame : RequestKind::Nro;
+            g_titleId = titleId;
             g_state = "queued";
             g_result = 0;
             g_pending = true;
@@ -402,6 +406,9 @@ const char* serveClient(int fd) {
         } else if (command.kind == CommandKind::Launch) {
             if (!queueLaunch(fd, command.argument))
                 return "launch-response-failed";
+        } else if (command.kind == CommandKind::StartGame) {
+            if (!queueLaunch(fd, {}, command.titleId))
+                return "game-start-response-failed";
         } else if (command.kind == CommandKind::Press) {
             if (g_inputBlocked.load()) {
                 answerError(fd, "input-disabled");
@@ -633,6 +640,8 @@ void stop() {
         g_busy = false;
         g_currentId = 0;
         g_path.clear();
+        g_kind = RequestKind::Nro;
+        g_titleId = 0;
         g_state = "idle";
         g_result = 0;
         g_code.clear();
@@ -646,6 +655,8 @@ bool take(Request& request) {
         return false;
     request.id = g_currentId;
     request.path = std::move(g_path);
+    request.kind = g_kind;
+    request.titleId = g_titleId;
     g_path.clear();
     g_pending = false;
     g_state = "launching";

@@ -46,6 +46,17 @@ Command parseCommand(std::string_view line) {
     }
     if (equalAsciiCaseInsensitive(line, "status"))
         return {CommandKind::Status, {}};
+    if (line.substr(0, 10) == "gamestart ") {
+        const auto text = line.substr(10);
+        std::uint64_t tid = 0;
+        const auto parsed = std::from_chars(text.data(), text.data() + text.size(), tid, 16);
+        if (text.size() != 16 || parsed.ec != std::errc{} ||
+            parsed.ptr != text.data() + text.size() || tid == 0)
+            return {};
+        Command command{CommandKind::StartGame, std::string(text)};
+        command.titleId = tid;
+        return command;
+    }
     if (line == "capture")
         return {CommandKind::Capture, {}};
     if (line.size() == 9 && line.substr(0, 8) == "capture "

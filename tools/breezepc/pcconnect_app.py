@@ -748,7 +748,7 @@ class App:
         self.restore_btn.pack(side="left")
         self.stop_btn = tk.Button(sbar, text="Stop game", command=self.on_stop_game, state="disabled")
         self.stop_btn.pack(side="left")
-        self.start_btn = tk.Button(sbar, text="Start game", command=self.on_start_game, state="disabled")
+        self.start_btn = tk.Button(sbar, text="Start game", command=self.on_start_game)
         self.start_btn.pack(side="left")
         self.files = None
         tk.Button(sbar, text="Files...", command=self.on_files).pack(side="left")
@@ -1529,6 +1529,7 @@ class App:
         self.switchu_nro_btn.config(state=state)
         self.switchu_status_btn.config(state=state)
         self.switchu_controller_btn.config(state=state)
+        self.start_btn.config(state="disabled" if self.switchu_busy else "normal")
         input_blocked = (handoff_blocked or self.switchu_controller_state != "enabled"
                          or self.switchu_controller_command_pending)
         input_state = "disabled" if input_blocked else "normal"
@@ -1802,7 +1803,7 @@ class App:
         j = self.save
         if not j:
             self.redirect_var.set(False)
-            for w in (self.redirect_box, self.snap_btn, self.restore_btn, self.stop_btn, self.start_btn):
+            for w in (self.redirect_box, self.snap_btn, self.restore_btn, self.stop_btn):
                 w.config(state="disabled")
             self.save_info.config(text="no game")
             return
@@ -2016,7 +2017,32 @@ class App:
             return
         if self.save and self.save.get("game_running"):
             return
-        self.link.send("gamestart " + tid)
+        self.send_switchu_game(tid)
+
+    def send_switchu_game(self, tid):
+        if self.switchu_busy:
+            self.status.config(text="A SwitchU request is pending; no game start was sent.")
+            return
+        self.switchu_busy = True
+        self._set_switchu_buttons()
+        self.status.config(text="Starting TID via SwitchU 6802...")
+        threading.Thread(target=self._switchu_game_worker,
+                         args=(self.switchu_generation, self.cfg["host"], self.cfg["code"], tid),
+                         daemon=True).start()
+
+    def _switchu_game_worker(self, generation, host, code, tid):
+        accepted = False
+        try:
+            receipt = switchu_remote.start_game(host, code, tid)
+            number = switchu_remote.request_id(receipt)
+            observed = switchu_remote.wait_for_request(host, code, number, deadline=20)
+            accepted = (switchu_remote.request_id(observed) == number
+                        and switchu_remote.status_state(observed) == "started")
+            message = ("Game started via 6802; waiting for Breeze to reconnect." if accepted else
+                       "SwitchU game request: %s. No start was resent." % observed)
+        except (switchu_remote.RemoteError, ValueError) as exc:
+            message = "SwitchU game start: %s. No start was resent." % exc
+        self.out.put(("switchu_game", generation, tid, accepted, message))
 
     def on_game_reply(self, line, reply):
         if not reply.startswith("+OK"):
@@ -2217,6 +2243,15 @@ class App:
                         self.last_reply = ""
                 elif item[0] == "status":
                     self.status.config(text=item[1])
+                elif item[0] == "switchu_game":
+                    _, generation, tid, accepted, message = item
+                    if generation == self.switchu_generation:
+                        self.switchu_busy = False
+                        if accepted:
+                            self.cfg["game_history"] = remember_game(self.cfg.get("game_history"), tid)
+                            self.save_cfg()
+                        self._set_switchu_buttons()
+                        self.status.config(text=message)
                 elif item[0] == "switchu_remote":
                     _, generation, done, message = item
                     if generation == self.switchu_generation:

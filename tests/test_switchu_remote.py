@@ -63,6 +63,15 @@ class MockSwitchU:
 
 
 class SwitchURemoteTests(unittest.TestCase):
+    def test_start_game_one_shot_and_lost_receipt(self):
+        server = self.with_server(command_reply="OK queued 7")
+        self.assertEqual(remote.start_game("127.0.0.1", "1234", "0100005027a18000", port=server.port), "OK queued 7")
+        self.assertEqual(server.commands, ["gamestart 0100005027A18000"])
+        lost = self.with_server(close_after_command=True)
+        with self.assertRaises(remote.AmbiguousLaunchError):
+            remote.start_game("127.0.0.1", "1234", "0100005027A18000", port=lost.port)
+        self.assertEqual(lost.commands, ["gamestart 0100005027A18000"])
+
     def test_capture_reads_exact_binary_after_header(self):
         jpeg = b"\xff\xd8binary\nframe\xff\xd9"
         server = self.with_server(command_reply="OK capture bytes=%d width=1280 height=720 format=jpeg" % len(jpeg), payload=jpeg)

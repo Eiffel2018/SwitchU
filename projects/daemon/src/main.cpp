@@ -1205,7 +1205,8 @@ static void beginBreezeCandidate(bool direct, AccountUid uid, const char* slotNa
 }
 
 static bool breezeSkipForegroundRestore() {
-    return g_breezeResumeOnClose || g_breezeCloseForGame;
+    return (g_remoteNroPending && g_remoteNroRequest.kind == daemon::remote::RequestKind::StartGame)
+        || g_breezeResumeOnClose || g_breezeCloseForGame;
 }
 
 static bool remoteNroSkipForegroundRestore() {
@@ -2058,6 +2059,14 @@ static Result chooseRequestedLaunchUser(uint64_t titleId, AccountUid* outUid) {
     return 0;
 }
 
+static void scheduleBreezeReturnAfterGameStart() {
+    g_breezeReturnWaitLogged = false;
+    const auto sessionId = daemon::app::snapshot().sessionId;
+    g_breezeRestoreTargetSessionId = sessionId;
+    g_breezeLaunchHandoff.schedule(sessionId, armTicksToNs(armGetSystemTick()));
+    switchu::FileLog::log("[launch-request] Breeze return scheduled in 2s");
+}
+
 static Result launchRequestedApplication() {
     const Result rc = daemon::app::launchRequested(chooseRequestedLaunchUser,
                                                   g_launchRequestFromApplet);
@@ -2065,13 +2074,8 @@ static Result launchRequestedApplication() {
         noteApplicationLaunched();
         // Keep the PC game-start handoff. This return is tied to this game
         // session; an explicit different-NRO launch still cancels it.
-        if (g_launchRequestFromBreeze) {
-            g_breezeReturnWaitLogged = false;
-            g_breezeRestoreTargetSessionId = daemon::app::snapshot().sessionId;
-            g_breezeLaunchHandoff.schedule(daemon::app::snapshot().sessionId,
-                                            armTicksToNs(armGetSystemTick()));
-            switchu::FileLog::log("[launch-request] Breeze return scheduled in 2s");
-        }
+        if (g_launchRequestFromBreeze)
+            scheduleBreezeReturnAfterGameStart();
     }
     g_launchRequestFromBreeze = false;
     switchu::FileLog::log("[launch-request] rc=0x%X title=0x%016lX", rc,
@@ -2243,18 +2247,35 @@ static void pollRemoteNroRequests() {
             daemon::remote::finish(request.id, "failed", daemon::SystemActionQueue::kBusyResult);
             return;
         }
-        // The transport validates syntax; reject a missing/non-NRO target
-        // before closing the user's current applet.
-        unsigned char header[0x14]{};
-        FILE* file = std::fopen(request.path.c_str(), "rb");
-        const bool valid = file && std::fread(header, 1, sizeof(header), file) == sizeof(header)
-            && std::memcmp(header + 0x10, "NRO0", 4) == 0;
-        if (file)
-            std::fclose(file);
-        if (!valid) {
-            daemon::remote::finish(request.id, "failed", MAKERESULT(Module_Libnx, LibnxError_BadInput));
-            switchu::FileLog::log("[remote-nro] rejected missing/invalid target id=%lu path=%s", request.id, request.path.c_str());
-            return;
+        if (request.kind == daemon::remote::RequestKind::StartGame) {
+            // Never replace a running game implicitly or close its NRO on rejection.
+            daemon::app::checkFinished();
+            if (daemon::app::isRunning()) {
+                daemon::remote::finish(request.id, "failed", daemon::SystemActionQueue::kBusyResult);
+                return;
+            }
+            std::vector<switchu::ns::ExtApplicationRecord> records;
+            if (!listApplicationRecords(records, "remote-game") ||
+                std::none_of(records.begin(), records.end(), [&](const auto& record) {
+                    return record.id == request.titleId;
+                })) {
+                daemon::remote::finish(request.id, "failed", MAKERESULT(Module_Libnx, LibnxError_NotFound));
+                return;
+            }
+        } else {
+            // The transport validates syntax; reject a missing/non-NRO target
+            // before closing the user's current applet.
+            unsigned char header[0x14]{};
+            FILE* file = std::fopen(request.path.c_str(), "rb");
+            const bool valid = file && std::fread(header, 1, sizeof(header), file) == sizeof(header)
+                && std::memcmp(header + 0x10, "NRO0", 4) == 0;
+            if (file)
+                std::fclose(file);
+            if (!valid) {
+                daemon::remote::finish(request.id, "failed", MAKERESULT(Module_Libnx, LibnxError_BadInput));
+                switchu::FileLog::log("[remote-nro] rejected missing/invalid target id=%lu path=%s", request.id, request.path.c_str());
+                return;
+            }
         }
         cancelBreezeReturn("remote-nro");
         g_breezeRelaunchPending = false;
@@ -3010,6 +3031,30 @@ static bool processRemoteNroRequest() {
     }
 
     const auto request = g_remoteNroRequest;
+    if (request.kind == daemon::remote::RequestKind::StartGame) {
+        g_remoteNroPending = false;
+        g_remoteNroForegroundRequested = false;
+        if (daemon::app::isRunning()) {
+            daemon::remote::finish(request.id, "failed", daemon::SystemActionQueue::kBusyResult);
+            return true;
+        }
+        AccountUid uid{};
+        g_launchRequestFromBreeze = true; // reuse the noninteractive first-account policy
+        Result rc = chooseRequestedLaunchUser(request.titleId, &uid);
+        g_launchRequestFromBreeze = false;
+        if (R_SUCCEEDED(rc))
+            rc = daemon::app::launch(request.titleId, uid);
+        if (R_SUCCEEDED(rc)) {
+            noteApplicationLaunched();
+            scheduleBreezeReturnAfterGameStart();
+        }
+        daemon::remote::finish(request.id, R_FAILED(rc) ? "failed" : "started", rc);
+        switchu::FileLog::logCommit("[remote-game] id=%lu title=0x%016lX rc=0x%X",
+                                    request.id, request.titleId, rc);
+        if (R_FAILED(rc))
+            openHome(smi::MenuStartMode::MainMenu, "remote-game-failed");
+        return true;
+    }
     Result rc = daemon::registerExternalContent(smi::kMenuTakeoverProgramId, smi::kBreezeAlbumLoaderDir);
     if (R_FAILED(rc)) {
         fail(rc);

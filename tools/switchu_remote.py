@@ -125,15 +125,22 @@ def _read_line(sock: socket.socket, limit: int = 4096, *, deadline=None) -> str:
     raise RemoteError("SwitchU reply is too long")
 
 
+def validate_tid(tid: str) -> str:
+    if not isinstance(tid, str) or not re.fullmatch(r"[0-9A-Fa-f]{16}", tid) or int(tid, 16) == 0:
+        raise ValueError("TID must be 16 hexadecimal digits and nonzero")
+    return tid.upper()
+
+
 def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
             timeout: float = 3.0) -> str:
     """Send one authenticated command. Launches and inputs are never replayed."""
     if not code or "\n" in code or "\r" in code:
         raise ValueError("PC connect code is empty or invalid")
     if (command not in ("status", "controller status", "controller on", "controller off")
-            and not command.startswith(("launch ", "press ", "stick ", "touch "))):
+            and not command.startswith(("launch ", "gamestart ", "press ", "stick ", "touch "))):
         raise ValueError("unsupported SwitchU command")
     path = None
+    tid = None
     input_press = None
     input_stick = None
     input_touch = None
@@ -141,6 +148,9 @@ def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
     if command.startswith("launch "):
         path = validate_sd_path(command[len("launch "):])
         command = "launch " + path
+    elif command.startswith("gamestart "):
+        tid = validate_tid(command[len("gamestart "):])
+        command = "gamestart " + tid
     elif command.startswith("press "):
         fields = command.split()
         if len(fields) != 3:
@@ -179,7 +189,7 @@ def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
                 if auth.startswith("ERR "):
                     raise RemoteError(auth[4:])
                 raise RemoteError("SwitchU authentication failed")
-            sent_launch = path is not None
+            sent_launch = path is not None or tid is not None
             sent_input = input_press is not None or input_stick is not None or input_touch is not None
             sent_controller = controller_action is not None
             sock.sendall((command + "\n").encode("utf-8"))
@@ -217,7 +227,7 @@ def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
                 else "OK controller enabled" if command == "controller on"
                 else "OK controller disabled" if command == "controller off"
                 else "OK controller " if command == "controller status"
-                else "OK status " if path is None else "OK queued ")
+                else "OK status " if path is None and tid is None else "OK queued ")
     if not reply.startswith(expected):
         if sent_input:
             raise AmbiguousInputError(
@@ -229,7 +239,7 @@ def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
             )
         if command == "controller status":
             raise RemoteError("unexpected SwitchU controller status reply")
-        if path is not None:
+        if path is not None or tid is not None:
             raise AmbiguousLaunchError(
                 "launch was sent but SwitchU returned no valid receipt; check status before retrying"
             )
@@ -244,7 +254,7 @@ def request(host: str, code: str, command: str, *, port: int = DEFAULT_PORT,
         )
     if command == "controller status" and reply not in ("OK controller enabled", "OK controller disabled"):
         raise RemoteError("unexpected SwitchU controller status reply")
-    if path is not None and re.fullmatch(r"OK queued [1-9]\d*", reply) is None:
+    if (path is not None or tid is not None) and re.fullmatch(r"OK queued [1-9]\d*", reply) is None:
         raise AmbiguousLaunchError("launch was sent but its receipt ID is invalid; check status before retrying")
     return reply
 
@@ -256,6 +266,12 @@ def status(host: str, code: str, *, port: int = DEFAULT_PORT, timeout: float = 3
 def launch(host: str, code: str, path: str = DEFAULT_BREEZE, *,
            port: int = DEFAULT_PORT, timeout: float = 3.0) -> str:
     return request(host, code, "launch " + validate_sd_path(path), port=port, timeout=timeout)
+
+
+def start_game(host: str, code: str, tid: str, *,
+               port: int = DEFAULT_PORT, timeout: float = 3.0) -> str:
+    """Queue one installed TID. Never replace an already running game."""
+    return request(host, code, "gamestart " + validate_tid(tid), port=port, timeout=timeout)
 
 
 def press_button(host: str, code: str, button: str, duration_ms: int = 100, *,
@@ -384,7 +400,7 @@ def _credentials(args) -> str:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Send a one-shot SwitchU remote launch request")
     parser.add_argument("host", help="Switch IP address")
-    parser.add_argument("command", choices=("status", "launch"))
+    parser.add_argument("command", choices=("status", "launch", "gamestart"))
     parser.add_argument("path", nargs="?", help="absolute SD path, e.g. '/hbmenu.nro' or '/switch/Breeze/Breeze.nro'")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--code-env", metavar="VARIABLE",
@@ -399,7 +415,10 @@ def main(argv=None) -> int:
                 parser.error("status does not take a path")
             print(status(args.host, code, port=args.port))
             return 0
-        receipt = launch(args.host, code, args.path or DEFAULT_BREEZE, port=args.port)
+        if args.command == "gamestart":
+            receipt = start_game(args.host, code, args.path, port=args.port)
+        else:
+            receipt = launch(args.host, code, args.path or DEFAULT_BREEZE, port=args.port)
         print(receipt)
         number = request_id(receipt)
         if args.wait > 0 and number is not None:

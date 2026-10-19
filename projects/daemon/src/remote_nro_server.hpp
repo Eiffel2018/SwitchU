@@ -5,11 +5,15 @@
 
 namespace switchu::daemon::remote {
 
-constexpr const char* kRemoteChannelVersionMarker = "remote channel v5";
+constexpr const char* kRemoteChannelVersionMarker = "remote channel v6";
+
+enum class RequestKind { Nro, StartGame };
 
 struct Request {
     std::uint64_t id = 0;
     std::string path;
+    RequestKind kind = RequestKind::Nro;
+    std::uint64_t titleId = 0;
 };
 
 // Starts the authenticated BreezePC listener. Returns false when disabled,
