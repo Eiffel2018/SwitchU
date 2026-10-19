@@ -33,12 +33,13 @@ struct LibraryAppletRequest {
     // Points at the running applet's holder between start and join, so the
     // pump can exchange interactive storages with it; null otherwise.
     AppletHolder** activeHolder = nullptr;
+    LibAppletMode mode = LibAppletMode_AllForeground;
 };
 
 using LibraryAppletPump = void (*)();
 using LibraryAppletExitRequested = bool (*)();
 
-// Runs a foreground library applet without delegating its lifetime to a
+// Runs a foreground/background library applet without delegating its lifetime to a
 // blocking libnx convenience wrapper. This keeps the daemon able to process
 // HOME and guarantees join/close on every successful start path.
 Result runLibraryApplet(const LibraryAppletRequest& request,

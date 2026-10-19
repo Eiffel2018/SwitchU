@@ -32,7 +32,10 @@ not bundled.
 use authenticated TCP 6802 even when Breeze is closed. The daemon update must
 be installed and the Switch rebooted first. Game TID start/stop and the
 existing Breeze UI/file functions still use Breeze TCP 6801.
-Game start keeps the two-second automatic Breeze return for PC reconnection.
+Game start keeps automatic first-user selection and the two-second Breeze
+return for PC reconnection. The daemon first tries a true background launch;
+if unavailable it uses a foreground compatibility launch and returns the
+game foreground when Breeze is ready.
 Boot/exit defaults to the installed SwitchU menu or hbmenu, independently of
 Breeze; this requires the matching daemon/loader update and reboot. Explicit
 other-NRO launches cancel pending game-start returns.

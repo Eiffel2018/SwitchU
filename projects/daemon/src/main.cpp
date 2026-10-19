@@ -316,6 +316,7 @@ static bool g_breezeCloseForGame = false;    // held Breeze closing so the game 
 static bool g_breezeCloseForSleep = false;   // held Breeze closing before the console sleeps
 static bool g_breezeRelaunchPending = false; // next HOME from the game reopens Breeze
 static uint64_t g_breezePollTick = 0;
+static uint64_t g_breezeMissingSince = 0;
 
 // Breeze overlay (see smi::BreezeOverlayCommand): the game keeps the foreground
 // and Breeze draws over it on its own layer.
@@ -324,6 +325,8 @@ static BreezeOverlayState g_breezeOverlay = BreezeOverlayState::None;
 static bool g_breezeOverlayCapable = false;         // breeze_running holds the capability
 static bool g_breezeOverlayForegroundRequested = false;
 static AppletHolder* g_breezeHolder = nullptr;       // set by the runner while the applet runs
+static bool g_breezeStartedBackground = false;
+static uint64_t g_breezeBackgroundFailedSessionId = 0;
 
 static uint8_t g_lastBatteryPercent = 0xFF;
 static PsmChargerType g_lastChargerType = (PsmChargerType)0xFF;
@@ -1194,9 +1197,11 @@ static void beginBreezeCandidate(bool direct, AccountUid uid, const char* slotNa
     g_breezeCloseForSleep = false;
     g_breezeRelaunchPending = false;
     g_breezePollTick = 0;
+    g_breezeMissingSince = 0;
     g_breezeOverlay = BreezeOverlayState::None;
     g_breezeOverlayCapable = false;
     g_breezeOverlayForegroundRequested = false;
+    g_breezeStartedBackground = false;
 }
 
 static bool breezeSkipForegroundRestore() {
@@ -1351,6 +1356,18 @@ static bool handleBreezeHome(const char* source) {
         return true;
 
     if (g_breezeHidden || (daemon::app::isRunning() && daemon::app::hasForeground())) {
+        if (g_breezeStartedBackground && g_breezeHolder) {
+            // Promote this background applet only for an explicit HOME press.
+            // Do not replace it or request qlaunch foreground first.
+            serviceAssumeDomain(&g_breezeHolder->s);
+            const Result rc = serviceDispatch(&g_breezeHolder->s, 150);
+            if (R_SUCCEEDED(rc)) {
+                daemon::app::onHomeSuspend();
+                g_breezeHidden = false;
+            }
+            switchu::FileLog::log("[%s] HOME -> background Breeze foreground rc=0x%X", source, rc);
+            return true;
+        }
         // Game in front, Breeze held behind it: reclaiming the foreground shows
         // Breeze again without restarting it.
         if (!takeForegroundFromRunningApp(source)) {
@@ -1457,6 +1474,7 @@ static bool finishBreezeApplet(const char* name) {
     g_breezeOverlayForegroundRequested = false;
     g_breezeCandidate = false;
     g_breezeSession = false;
+    g_breezeStartedBackground = false;
     g_breezeHidden = false;
     g_breezeResumeOnClose = false;
     g_breezeCloseForGame = false;
@@ -2121,6 +2139,13 @@ static bool restoreBreezeAfterLaunch() {
         return false;
     }
     g_breezeLaunchHandoff.cancel(); // one attempt, including foreground/queue failure
+    if (g_breezeBackgroundFailedSessionId != sessionId) {
+        const Result rc = queueBreeze(g_lastLaunchUid, "breeze-pc-background", sessionId);
+        switchu::FileLog::log("[breeze-return] queued background start; game keeps foreground rc=0x%X", rc);
+        if (R_FAILED(rc))
+            retryBreezeReturn(sessionId, "background queue busy");
+        return R_SUCCEEDED(rc);
+    }
     if (!takeForegroundFromRunningApp("breeze-pc-start")) {
         retryBreezeReturn(sessionId, "foreground request failed");
         return false;
@@ -2293,8 +2318,26 @@ static void pumpBreezeAppletMessages() {
             return;
         }
         g_breezeSession = true;
+        g_breezeOverlayCapable = readBreezeOverlayCapability();
         if (g_breezeReturnAttemptSessionId != 0 &&
             g_breezeRestoreTargetSessionId == g_breezeReturnAttemptSessionId) {
+            if (g_breezeStartedBackground) {
+                g_breezeHidden = true;
+                switchu::FileLog::log("[breeze-return] background Breeze ready; foreground untouched");
+            } else if (daemon::app::isRunning()) {
+                // Compatibility fallback: enter hidden overlay where supported,
+                // then hand input/foreground back as soon as Breeze is ready.
+                bool overlayHidden = false;
+                if (readBreezeToggleMode() == BreezeToggleMode::Overlay && g_breezeOverlayCapable)
+                    overlayHidden = sendBreezeOverlay(smi::BreezeOverlayCommand::EnterHidden, 1500);
+                const Result resumeRc = daemon::app::resume();
+                if (R_SUCCEEDED(resumeRc)) {
+                    g_breezeHidden = true;
+                    if (overlayHidden)
+                        g_breezeOverlay = BreezeOverlayState::Hidden;
+                }
+                switchu::FileLog::log("[breeze-return] foreground fallback ready; game resume rc=0x%X", resumeRc);
+            }
             g_breezeRestoreTargetSessionId = 0;
             switchu::FileLog::log("[breeze-return] Breeze announced running; automatic retries finished");
         }
@@ -2319,12 +2362,22 @@ static void pumpBreezeAppletMessages() {
 
     // The loader can remain alive after Breeze exits into hbmenu/another NRO.
     // Do not keep treating that different NRO as a Breeze HOME session.
-    if (g_breezeOverlay == BreezeOverlayState::None &&
-        !breezeFlagExists(smi::kBreezeRunningFlag)) {
-        g_breezeSession = false;
-        g_breezeDirect = false;
-        g_breezeOverlayCapable = false;
-        g_breezeRelaunchPending = false;
+    if (breezeFlagExists(smi::kBreezeRunningFlag)) {
+        g_breezeMissingSince = 0;
+    } else if (g_breezeOverlay == BreezeOverlayState::None) {
+        // Exit may remove the flag just before AM delivers a game-start
+        // request. Drain it and retain the caller identity for one poll so
+        // first-user selection and the PC start handoff stay attributed.
+        drainBreezeLaunchMessages();
+        if (g_breezeMissingSince == 0)
+            g_breezeMissingSince = now;
+        if (!g_launchRequestPending &&
+            elapsedNsSince(g_breezeMissingSince) >= kBreezePollIntervalNs) {
+            g_breezeSession = false;
+            g_breezeDirect = false;
+            g_breezeOverlayCapable = false;
+            g_breezeRelaunchPending = false;
+        }
     }
 
     // mainLoop is blocked while the applet runs, so watch the game here.
@@ -2362,10 +2415,11 @@ static bool consumeForegroundAppletHomeRequest() {
 
 static Result launchLibraryApplet(AppletId id, const char* name,
                                   const void* inData = nullptr, size_t inDataSize = 0,
-                                  u32 libAppletVersion = 0, bool breezeCandidate = false) {
+                                  u32 libAppletVersion = 0, bool breezeCandidate = false,
+                                  LibAppletMode mode = LibAppletMode_AllForeground) {
     switchu::FileLog::log("[applet] launching %s id=0x%X version=0x%X in=%zu",
                           name, (u32)id, libAppletVersion, inDataSize);
-    Result fgRc = appletRequestToGetForeground();
+    Result fgRc = mode == LibAppletMode_Background ? 0 : appletRequestToGetForeground();
     switchu::FileLog::log("[applet] %s RequestToGetForeground rc=0x%X", name, fgRc);
 
     g_foregroundAppletActive = true;
@@ -2376,12 +2430,13 @@ static Result launchLibraryApplet(AppletId id, const char* name,
         .name = name,
         .version = libAppletVersion,
         .pushCommonArgs = libAppletVersion != 0,
-        .playStartupSound = true,
+        .playStartupSound = mode != LibAppletMode_Background,
         .inputs = inData && inDataSize ? &input : nullptr,
         .inputCount = inData && inDataSize ? 1U : 0U,
         .skipForegroundRestore = breezeCandidate ? breezeSkipForegroundRestore : nullptr,
         .terminateOnExit = breezeCandidate ? breezeTerminateOnExit : nullptr,
         .activeHolder = breezeCandidate ? &g_breezeHolder : nullptr,
+        .mode = mode,
     };
     const Result rc = daemon::runLibraryApplet(
         request,
@@ -2834,7 +2889,8 @@ static bool writeNroLaunchInput(uint64_t requestId, const char* path) {
 
 // Use the same bundled loader, but request the actual target explicitly.
 // Its default/return path is hbmenu, never Breeze.
-static Result launchNroInAlbum(const char* path, const char* name) {
+static Result launchNroInAlbum(const char* path, const char* name,
+                               LibAppletMode mode = LibAppletMode_AllForeground) {
     Result rc = daemon::registerExternalContent(smi::kMenuTakeoverProgramId,
                                                 smi::kBreezeAlbumLoaderDir);
     if (R_FAILED(rc)) {
@@ -2848,7 +2904,7 @@ static Result launchNroInAlbum(const char* path, const char* name) {
     }
     const u8 albumArg = AlbumLaArg_ShowAllAlbumFilesForHomeMenu;
     rc = launchLibraryApplet(AppletId_LibraryAppletPhotoViewer, name,
-                             &albumArg, sizeof(albumArg), 0x10000, true);
+                             &albumArg, sizeof(albumArg), 0x10000, true, mode);
     clearNroLaunchFiles();
     const Result unregisterRc = daemon::unregisterExternalContent(smi::kMenuTakeoverProgramId);
     if (R_FAILED(unregisterRc))
@@ -3134,19 +3190,28 @@ static bool handleAction(daemon::SystemAction& action) {
             }
             const AccountUid uid = resolveUser(action.uid);
             beginBreezeCandidate(true, uid, "explicit Breeze NRO");
+            const bool background = automaticReturn &&
+                g_breezeBackgroundFailedSessionId != action.breezeReturnSessionId;
+            g_breezeStartedBackground = background;
+            g_breezeHidden = background;
             switchu::FileLog::log("[breeze] opening Breeze via %s", g_breezeSlotName);
             const uint64_t startedAt = armGetSystemTick();
             g_breezeReturnAttemptSessionId = action.breezeReturnSessionId;
             g_breezeReturnAttemptStartedAt = startedAt;
             g_breezeReturnLastProbeAt = 0;
             g_breezeReturnAttemptTimedOut = false;
-            const Result rc = launchNroInAlbum(smi::kBreezeNroPath, "Album(Breeze)");
+            const Result rc = launchNroInAlbum(smi::kBreezeNroPath, "Album(Breeze)",
+                background ? LibAppletMode_Background : LibAppletMode_AllForeground);
             if (R_FAILED(rc))
                 switchu::FileLog::log("[action] Breeze FAIL: 0x%X", rc);
             const bool handedOver = finishBreezeApplet("Breeze");
             g_breezeReturnAttemptSessionId = 0;
             g_breezeReturnAttemptTimedOut = false;
             if (automaticReturn && g_breezeRestoreTargetSessionId == action.breezeReturnSessionId) {
+                if (background) {
+                    g_breezeBackgroundFailedSessionId = action.breezeReturnSessionId;
+                    switchu::FileLog::log("[breeze-return] background launch not ready; next attempt uses foreground fallback");
+                }
                 if (daemon::app::isRunning() && !daemon::app::hasForeground())
                     daemon::app::resume();
                 retryBreezeReturn(action.breezeReturnSessionId, "loader closed without a Breeze running handshake");

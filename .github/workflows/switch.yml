@@ -63,6 +63,8 @@ jobs:
           /tmp/breeze-launch-handoff-test
           gcc -std=c11 -Wall -Wextra -Werror tests/nro_launch_policy_test.c -o /tmp/nro-launch-policy-test
           /tmp/nro-launch-policy-test
+          g++ -std=c++17 -Wall -Wextra -Werror -I tests/library_applet_stub tests/library_applet_runner_test.cpp projects/daemon/src/library_applet_runner.cpp -o /tmp/library-applet-runner-test
+          /tmp/library-applet-runner-test
           g++ -std=c++17 -Wall -Wextra -Werror tests/remote_nro_protocol_test.cpp projects/daemon/src/remote_nro_protocol.cpp -o /tmp/remote-nro-protocol-test
           /tmp/remote-nro-protocol-test
           g++ -std=c++17 -Wall -Wextra -Werror -I tests/remote_nro_input_stub tests/remote_nro_input_test.cpp projects/daemon/src/remote_nro_input.cpp -o /tmp/remote-nro-input-test

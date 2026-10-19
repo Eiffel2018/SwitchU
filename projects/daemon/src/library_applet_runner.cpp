@@ -43,7 +43,7 @@ Result runLibraryApplet(const LibraryAppletRequest& request,
 
     HolderGuard guard;
     Result rc = appletCreateLibraryApplet(
-        &guard.holder, request.id, LibAppletMode_AllForeground);
+        &guard.holder, request.id, request.mode);
     if (R_FAILED(rc)) {
         switchu::FileLog::log("[applet] %s create FAIL: 0x%X", request.name, rc);
         return rc;
@@ -124,8 +124,8 @@ Result runLibraryApplet(const LibraryAppletRequest& request,
                                  request.outputTransferSize);
     }
 
-    const bool skipRestore =
-        request.skipForegroundRestore && request.skipForegroundRestore();
+    const bool skipRestore = request.mode == LibAppletMode_Background ||
+        (request.skipForegroundRestore && request.skipForegroundRestore());
     const Result foregroundRc = skipRestore ? 0 : appletRequestToGetForeground();
     switchu::FileLog::log(
         "[applet] %s closed reason=%d rc=0x%X module=%u desc=%u restore_fg=0x%X skipped=%d",

@@ -34,8 +34,12 @@ returned by the system account list. Other launchers retain their user picker.
 Games that do not use accounts are launched without a preselected user.
 
 After a successful Breeze PC game start, the daemon still waits two seconds
-and reopens Breeze after AM confirms the foreground transfer. Retry/session
-fencing and first-user selection are unchanged. An explicit different-NRO
+and first tries to start Breeze as a background library applet, keeping the
+game foreground. If that fails or does not announce readiness within the
+bounded startup window, it closes that attempt and uses the compatibility
+foreground path, returning input/foreground to the game once Breeze is ready.
+The chosen path is logged. Retry/session fencing and first-user selection
+are unchanged. An explicit different-NRO
 launch cancels this automatic return, so it cannot replace hbmenu or DBI.
 AM identifies the requesting Breeze applet, not the individual TCP client.
 
