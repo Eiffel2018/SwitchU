@@ -175,6 +175,11 @@ static constexpr const char* kBreezeRunningFlag    = "sdmc:/config/SwitchU/breez
 // HOME closes the applet and opens the SwitchU menu, whatever the toggle says.
 // Removed on use and whenever a Breeze applet starts or closes.
 static constexpr const char* kBreezeOpenMenuFlag   = "sdmc:/config/SwitchU/breeze_open_switchu";
+// Written by Breeze just before it exits (interface 5): one word naming a
+// system applet Breeze cannot start itself (album, mii, remap, netconnect,
+// usercreator). The daemon starts it once Breeze has closed and opens Breeze
+// again when it closes. Removed on use and whenever a Breeze applet starts.
+static constexpr const char* kBreezeOpenAppletFlag = "sdmc:/config/SwitchU/breeze_open_applet";
 // Breeze first (fork-only): with this file present, HOME is Breeze. The daemon
 // opens Breeze at boot and wherever it would open the SwitchU menu, and reopens
 // it when it closes with no game running. The SwitchU menu is reached only
@@ -199,6 +204,7 @@ static constexpr const char* kHomeToggleForkMarker = "sdmc:/config/SwitchU/home_
 //   2: Overlay mode (smi::BreezeOverlayCommand) and Breeze's SwitchU button
 //   3: BreezeOverlayCommand Release / StateChanged (Breeze's Break and Trace)
 //   4: kBreezeFirstFlag (Breeze as HOME) and the Album loader next to the daemon
+//   5: kBreezeOpenAppletFlag (system applets started for Breeze)
 static constexpr const char* kForkInfoPath = "sdmc:/switch/SwitchU/fork.txt";
 // The same file next to the daemon (from 1.2.0i), so a daemon-only install
 // without switch/SwitchU still tells Breeze its interface level.
