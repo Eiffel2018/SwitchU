@@ -2082,6 +2082,15 @@ static void pumpBreezeAppletMessages() {
                            g_breezeOverlayCapable ? 1 : 0, static_cast<int>(readBreezeToggleMode()));
     }
 
+    // Breeze closed itself for a system applet (kBreezeOpenAppletFlag), and
+    // hbloader went on to hbmenu in the same applet. Close it as HOME would,
+    // without waiting for HOME; finishBreezeApplet then starts the applet.
+    if (!breezeFlagExists(smi::kBreezeRunningFlag) && breezeFlagExists(smi::kBreezeOpenAppletFlag) &&
+        !g_pendingForegroundAppletHome) {
+        g_pendingForegroundAppletHome = true;
+        breezeOverlayTrace("Breeze exited for an applet; closing hbmenu");
+    }
+
     if (g_breezeOverlay != BreezeOverlayState::None) {
         drainBreezeOverlayMessages(smi::BreezeOverlayCommand::Ack);
         if (g_breezeOverlayForegroundRequested) {
