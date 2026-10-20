@@ -68,3 +68,21 @@ Native source `5f77070` (CI run `39189002879`), PC functionality `2d1cff4` (PC p
 After testing GK2 was stopped without loading a save, a second reboot archived the new log, and Breeze was opened for handoff. Final state: no game/debugger/BP, Breeze gamepad detached, SwitchU input OFF, root sockets/UI workers closed; console formally returned to the Graveyard Keeper task. Its mod/NPDM/save files were not changed. XCOM2 is excluded from future tests at the user's request.
 
 The original 6801 game/file/debug commands remain available. The new PC Start menu uses 6802 and never resends an ambiguous start through 6801; callers must stop a running game first. A queue/started receipt alone does not certify application readiness or every application's handling of a chord.
+
+
+## 2026-10-20: upstream 1.2.0n / Breeze beta126 interface 5
+
+Source `10e083aa56e29e2a6e10dbf80a7ff6123dbfe00a` merges upstream `43cdac4` into the standalone 6802 fork. Native CI `39399007661` passed, including eight host fixtures. The daemon-only ZIP passed CRC, five-member manifest, interface/version and NSO/NPDM identity checks. Module SHA256: `6ce356dbcc6a0d01a293afdf9021fb074c7477ce6bc0bba46db23d036255ff5e`. Loader remains `c5194782d44d3ea076f52357f9eff9dbd826fa4ae42cde9b40bd3d46863101de`, NPDM `f526ecc43f94ec256dc1bca1161f24293790010fcf9962e70119bf1337eb3bb8`.
+
+Merge resolutions retain generated loader/toolbox installation in a daemon-only build and make the interface-5 return one-shot: an explicit NRO replacement or requested game launch cancels it. Breeze identity is retained while its system-applet request is consumed. Existing 6802 commands and PC source functionality are unchanged.
+
+Targeted beta126.00 hardware window granted by the NSHome owner, 17:29:15-17:39:15 HKT:
+
+- Paired candidate install/readback, NSHome boot flag temporarily disabled, normal reboot to real hbmenu.
+- Actual Breeze Nintendo applets menu opened Mii Maker. Cancel returned to Breeze Games without creating a Mii. This checks a real system applet; it does not claim all five applets were exercised.
+- Album follows this console's hbmenu override. While that requested applet was open, explicit 6802 `/hbmenu.nro` replacement stayed in hbmenu without an unwanted Breeze return. Stock Album was not verified.
+- Games Back (page 2) returned to Breeze Main, then normal B exited to hbmenu. No Breeze-as-default regression.
+- Optional GK2 6802 start selected its user automatically; 6801 returned with PID143/BIDbc64bd880d0cde99. One `gamestop` returned stopped and left Breeze visible, without the stock software-closed prompt. This was a startup-only test, not a loaded-save or full title-menu test. No debug attach/stop/BP/watch or cheat changes were made. The stale `attached:true` UI bit briefly remained without PID/TID; `save status` reported no game and the restored boot reported attached:false. Stop was not replayed.
+- Restored original SwitchU loader/metadata, left the original `7b40...` daemon disabled, re-enabled NSHome boot2 and normal-rebooted. Verified stock qlaunch, fresh NSHome0.1.11 boot141931730, module hash unchanged, Breeze6801 ready, game/debug/gamepad empty and input OFF. Removed owned temporary files and closed clients, returning before the deadline. The candidate is NOT left installed on the shared console.
+
+Evidence: `C:/Users/OP/AppData/Local/Temp/switchu-interface5/` (candidate.json, install/restore receipts, mii-return.json, screenshots, final-return.json). Eden lab has no relevant 6802/HOS cross-process adapter, so this targeted integration check used an explicit physical window after PC fixtures; no emulator profile was started. R:/Breeze_v126 and NSHome/tools/breezepc were not modified.
