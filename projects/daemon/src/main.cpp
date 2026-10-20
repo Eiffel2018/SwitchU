@@ -10,6 +10,7 @@
 #include <switchu/sd_commit.hpp>
 #include "app_manager.hpp"
 #include "breeze_launch_handoff.hpp"
+#include "breeze_applet_request.hpp"
 #include "ecs.hpp"
 #include "library_applet_runner.hpp"
 #include "menu_launcher.hpp"
@@ -309,6 +310,7 @@ static bool g_breezeSession = false;         // that applet announced itself as 
 static bool g_breezeDirect = false;          // the slot boots Breeze itself (User Page or
                                              // Album loader), so the daemon can relaunch it
 static const char* g_breezeSlotName = "Album";
+static daemon::BreezeAppletReturn g_breezeAppletReturn;
 static AccountUid g_breezeUid{};
 static bool g_breezeHidden = false;          // keep: game in front, Breeze held behind it
 static bool g_breezeResumeOnClose = false;   // restart: resume the game once Breeze closed
@@ -1186,6 +1188,7 @@ static void restoreInputAfterBreezeOverlay() {
 static void beginBreezeCandidate(bool direct, AccountUid uid, const char* slotName) {
     ::remove(smi::kBreezeRunningFlag);
     ::remove(smi::kBreezeOpenMenuFlag);
+    ::remove(smi::kBreezeOpenAppletFlag);
     g_breezeCandidate = true;
     g_breezeSession = false;
     g_breezeDirect = direct;
@@ -1459,8 +1462,29 @@ static bool deferSleepForHeldBreeze(const char* source) {
 
 // Called after the Album / User Page applet closed. Returns true when the
 // Breeze toggle handed the foreground to the game, so the menu stays closed.
+// The system applet Breeze asked for in kBreezeOpenAppletFlag (removed here).
+static bool takeBreezeAppletRequest(daemon::SystemActionType& type) {
+    FILE* file = fopen(smi::kBreezeOpenAppletFlag, "rb");
+    if (!file)
+        return false;
+    char word[32]{};
+    const size_t n = fread(word, 1, sizeof(word), file);
+    fclose(file);
+    ::remove(smi::kBreezeOpenAppletFlag);
+    switch (daemon::parseBreezeAppletRequest(std::string_view(word, n))) {
+        case daemon::BreezeAppletRequest::Album: type = daemon::SystemActionType::OpenAlbum; return true;
+        case daemon::BreezeAppletRequest::Mii: type = daemon::SystemActionType::OpenMiiEditor; return true;
+        case daemon::BreezeAppletRequest::Remap: type = daemon::SystemActionType::OpenControllerRemapping; return true;
+        case daemon::BreezeAppletRequest::NetConnect: type = daemon::SystemActionType::OpenNetConnect; return true;
+        case daemon::BreezeAppletRequest::UserCreator: type = daemon::SystemActionType::OpenUserCreator; return true;
+        default: switchu::FileLog::log("[breeze] invalid system applet request"); return false;
+    }
+}
+
 static bool finishBreezeApplet(const char* name) {
     const bool wasBreeze = g_breezeSession;
+    daemon::SystemActionType appletType{};
+    const bool appletRequested = wasBreeze && takeBreezeAppletRequest(appletType);
     const bool resumeGame = g_breezeResumeOnClose;
     const bool closedForGame = g_breezeCloseForGame;
     const bool closedForSleep = g_breezeCloseForSleep;
@@ -1489,6 +1513,21 @@ static bool finishBreezeApplet(const char* name) {
     // HOME or resume the game between closing this holder and its replacement.
     if (g_remoteNroPending)
         return true;
+
+    if (appletRequested && !closedForSleep) {
+        // Breeze asked for a system applet and closed for it. A game stays
+        // suspended behind it; Breeze opens again when the applet closes.
+        daemon::SystemAction action{};
+        action.type = appletType;
+        action.uid = g_breezeUid;
+        const Result rc = g_actionQueue.enqueue(action);
+        if (R_SUCCEEDED(rc))
+            g_breezeAppletReturn.arm();
+        switchu::FileLog::log("[breeze] %s closed for applet type=%u rc=0x%X", name,
+                              static_cast<u32>(appletType), rc);
+        if (R_SUCCEEDED(rc))
+            return true;
+    }
 
     if (closedForSleep) {
         // HOME after wake reopens Breeze through the profile takeover. From
@@ -2368,6 +2407,20 @@ static void pumpBreezeAppletMessages() {
                            g_breezeOverlayCapable ? 1 : 0, static_cast<int>(readBreezeToggleMode()));
     }
 
+    // Breeze closed itself for a system applet (kBreezeOpenAppletFlag), and
+    // hbloader went on to hbmenu in the same applet. Close it as HOME would,
+    // without waiting for HOME; finishBreezeApplet then starts the applet.
+    if (!breezeFlagExists(smi::kBreezeRunningFlag) && breezeFlagExists(smi::kBreezeOpenAppletFlag) &&
+        !g_pendingForegroundAppletHome) {
+        g_pendingForegroundAppletHome = true;
+        breezeOverlayTrace("Breeze exited for an applet; closing hbmenu");
+    }
+    // Retain the caller identity until finishBreezeApplet consumes interface5.
+    // Otherwise the normal missing-running-flag cleanup can classify hbmenu
+    // first and lose this request while the holder is closing.
+    if (g_pendingForegroundAppletHome && breezeFlagExists(smi::kBreezeOpenAppletFlag))
+        return;
+
     if (g_breezeOverlay != BreezeOverlayState::None) {
         drainBreezeOverlayMessages(smi::BreezeOverlayCommand::Ack);
         if (g_breezeOverlayForegroundRequested) {
@@ -2853,8 +2906,11 @@ static void handleMenuCommand() {
 }
 
 static Result relaunchMenuAfterApplet(const char* appletName) {
+    const bool returnToBreeze = g_breezeAppletReturn.take(g_remoteNroPending, g_launchRequestPending);
     if (g_remoteNroPending)
         return 0;
+    if (returnToBreeze && breezeCanStart())
+        return queueBreeze(g_breezeUid, appletName);
     if (!menuInstalled() && !g_launchRequestPending) {
         // No menu to return to: the Album closing with a game suspended goes
         // back to the game, as HOME in the SwitchU menu would.

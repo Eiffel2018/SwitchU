@@ -1,5 +1,11 @@
 name: Switch build
 
+# Every push builds the daemon alone, in release mode: the part a fork change
+# usually touches, and what Breeze's home_daemon.zip holds. The whole install
+# (menu, manager, daemon) is built only for a tag, which also makes the draft
+# release, or by hand (Run workflow). Debug and homebrew builds were dropped:
+# no release uses them.
+
 on:
   push:
     branches:
@@ -22,23 +28,17 @@ on:
 permissions:
   contents: read
 
+env:
+  LIBNX_COMMIT: 20cbcfd90567f7bf84df7725f27e345e2164fa6b
+  FULL: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && !inputs.daemon_only) }}
+
 jobs:
   build-switch:
     if: github.event_name != 'push' || !contains(github.event.head_commit.message, 'ci skip')
     runs-on: ubuntu-latest
     container: devkitpro/devkita64
 
-    strategy:
-      fail-fast: false
-      matrix:
-        mode: ${{ fromJSON(inputs.daemon_only && '["release"]' || '["debug","release"]') }}
-        variant: ${{ fromJSON(inputs.daemon_only && '["sysmodule"]' || '["homebrew","sysmodule"]') }}
-
     steps:
-      - name: Get current date as cache key
-        id: cache_key
-        run: echo "key=$(date +'%W')" >> "$GITHUB_OUTPUT"
-
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -55,12 +55,16 @@ jobs:
             apt-get -y install curl gcc g++ zip unzip zstd
           fi
 
+      # Atmosphere-libs 1.12.0 (lib/Atmosphere-libs) needs libnx newer than the
+      # container's 4.12.0 release (pgl shell events and more). The same
+      # switchbrew commit the local builds use, built once and cached.
       - name: Test Breeze launch handoff policy
-        if: matrix.variant == 'sysmodule' && matrix.mode == 'release'
         shell: bash
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror tests/breeze_launch_handoff_test.cpp -o /tmp/breeze-launch-handoff-test
           /tmp/breeze-launch-handoff-test
+          g++ -std=c++17 -Wall -Wextra -Werror tests/breeze_applet_request_test.cpp -o /tmp/breeze-applet-request-test
+          /tmp/breeze-applet-request-test
           gcc -std=c11 -Wall -Wextra -Werror tests/nro_launch_policy_test.c -o /tmp/nro-launch-policy-test
           /tmp/nro-launch-policy-test
           g++ -std=c++17 -Wall -Wextra -Werror -I tests/library_applet_stub tests/library_applet_runner_test.cpp projects/daemon/src/library_applet_runner.cpp -o /tmp/library-applet-runner-test
@@ -74,16 +78,48 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -I tests/remote_nro_capture_stub tests/remote_nro_capture_test.cpp projects/daemon/src/remote_nro_capture.cpp -o /tmp/remote-nro-capture-test
           /tmp/remote-nro-capture-test
 
-      # Atmosphere-libs 1.12.0 (lib/Atmosphere-libs) needs libnx newer than the
-      # container's 4.12.0 release (pgl shell events and more). Build the same
-      # switchbrew commit the local builds use.
+      - name: Cache libnx
+        id: libnx
+        uses: actions/cache@v4
+        with:
+          path: /opt/devkitpro/libnx
+          key: libnx-${{ env.LIBNX_COMMIT }}
+
       - name: Build libnx (switchbrew 20cbcfd9)
+        if: steps.libnx.outputs.cache-hit != 'true'
         shell: bash
         run: |
           git clone --filter=blob:none https://github.com/switchbrew/libnx.git /tmp/libnx
-          git -C /tmp/libnx checkout --detach 20cbcfd90567f7bf84df7725f27e345e2164fa6b
+          git -C /tmp/libnx checkout --detach "$LIBNX_COMMIT"
           make -C /tmp/libnx/nx -j"$(nproc)" install
-          grep -q pglEventObserverGetShellEvent "$DEVKITPRO/libnx/include/switch/services/pgl.h"
+
+      - name: Check libnx
+        shell: bash
+        run: grep -q pglEventObserverGetShellEvent "$DEVKITPRO/libnx/include/switch/services/pgl.h"
+
+      # libstratosphere is the slow part of the daemon. Cached per
+      # Atmosphere-libs commit and libnx commit; the restored files are
+      # touched so make sees them as newer than the fresh checkout.
+      - name: Atmosphere-libs commit
+        id: strat
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "sha=$(git ls-tree HEAD lib/Atmosphere-libs | awk '{print $3}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache libstratosphere
+        id: strat_cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            lib/Atmosphere-libs/libstratosphere/build
+            lib/Atmosphere-libs/libstratosphere/lib
+          key: libstratosphere-${{ steps.strat.outputs.sha }}-${{ env.LIBNX_COMMIT }}
+
+      - name: Mark cached libstratosphere current
+        if: steps.strat_cache.outputs.cache-hit == 'true'
+        shell: bash
+        run: find lib/Atmosphere-libs/libstratosphere/build lib/Atmosphere-libs/libstratosphere/lib -type f -exec touch {} +
 
       - name: Set xmake env
         run: echo "XMAKE_GLOBALDIR=${{ runner.workspace }}/xmake-global" >> "$GITHUB_ENV"
@@ -92,7 +128,14 @@ jobs:
         uses: xmake-io/github-action-setup-xmake@v1
         with:
           xmake-version: branch@dev
-          actions-cache-folder: .xmake-cache-W${{ steps.cache_key.outputs.key }}
+          actions-cache-folder: .xmake-cache
+
+      - name: Cache xmake packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.workspace }}/xmake-global
+          key: xmake-packages-${{ hashFiles('xmake.lua', 'packages/**') }}
+          restore-keys: xmake-packages-
 
       - name: Update xmake repository
         shell: bash
@@ -102,22 +145,18 @@ jobs:
 
       - name: Configure xmake
         shell: bash
-        run: |
-          if [ "${{ matrix.variant }}" = "homebrew" ]; then
-            xmake f --yes -p cross -m "${{ matrix.mode }}" -a aarch64 --toolchain=devkita64 --homebrew=y -vD --root
-          else
-            xmake f --yes -p cross -m "${{ matrix.mode }}" -a aarch64 --toolchain=devkita64 -vD --root
-          fi
+        run: xmake f --yes -p cross -m release -a aarch64 --toolchain=devkita64 -vD --root
 
-      - name: Build SwitchU
+      - name: Build
         shell: bash
         run: |
           set -o pipefail
-          if ! xmake -vD --root 2>&1 | tee build.log; then
+          target=switchu-daemon
+          [ "$FULL" = "true" ] && target=""
+          if ! xmake build -vD --root $target 2>&1 | tee build.log; then
             # Job logs need a GitHub sign-in; annotations do not. Put the
             # compiler's errors and the end of the log into one annotation.
-            { (dkp-pacman -Q libnx devkitA64 2>/dev/null || pacman -Q libnx devkitA64 2>/dev/null || true)
-              grep -nE "error:|Error [0-9]+|undefined reference|No such file" build.log | head -40
+            { grep -nE "error:|Error [0-9]+|undefined reference|No such file" build.log | head -40
               echo "----- last lines -----"
               tail -n 25 build.log; } > failure.txt
             msg=$(tr -d '\r' < failure.txt | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
@@ -125,55 +164,50 @@ jobs:
             exit 1
           fi
 
-      - name: Package install layout
-        run: xmake install -o "dist/${{ matrix.variant }}/${{ matrix.mode }}" --root
-
       - name: Build read-only controller and touch Probe
-        if: matrix.variant == 'sysmodule' && matrix.mode == 'release'
         run: make -C tools/controller-probe -j2
 
       - name: Upload controller and touch Probe
-        if: matrix.variant == 'sysmodule' && matrix.mode == 'release'
         uses: actions/upload-artifact@v4
         with:
           name: Controller-Probe
           path: tools/controller-probe/controller-probe.nro
           if-no-files-found: error
 
-      # The same two files a local release ships: SwitchU.zip (the whole
-      # install layout) and home_daemon.zip (the daemon folder only, which
-      # Breeze installs). Files only, no folder entries, atmosphere first.
-      - name: Create release zips
-        if: matrix.variant == 'sysmodule'
+      # The files a local release ships: home_daemon.zip (the daemon folder
+      # only, which Breeze installs) always, SwitchU.zip (the whole install)
+      # for a full build. Files only, no folder entries.
+      - name: Create zips
         shell: bash
         run: |
           out="$PWD/artifacts"
           mkdir -p "$out"
-          cd "dist/sysmodule/${{ matrix.mode }}"
+          if [ "$FULL" = "true" ]; then
+            xmake install -o dist --root
+          else
+            xmake install -o dist --root switchu-daemon
+          fi
+          cd dist
           test -f atmosphere/contents/0100000000001000/exefs.nsp
-          test -f switch/SwitchU/bin/menu/main
-          zip -q -r -D -X "$out/SwitchU.zip" atmosphere switch
+          test -f atmosphere/contents/0100000000001000/fork.txt
+          test -f atmosphere/contents/0100000000001000/breeze_loader/main
+          test -f atmosphere/contents/0100000000001000/breeze_loader/main.npdm
+          test -f atmosphere/contents/0100000000001000/toolbox.json
+          grep -qx 'interface=5' atmosphere/contents/0100000000001000/fork.txt
           zip -q -r -D -X "$out/home_daemon.zip" atmosphere/contents/0100000000001000
-          unzip -l "$out/SwitchU.zip" | tail -n 1
           unzip -l "$out/home_daemon.zip"
+          if [ "$FULL" = "true" ]; then
+            test -f switch/SwitchU/bin/menu/main
+            zip -q -r -D -X "$out/SwitchU.zip" atmosphere switch
+            unzip -l "$out/SwitchU.zip" | tail -n 1
+          fi
 
-      - name: Upload homebrew artifact
-        if: matrix.variant == 'homebrew'
+      - name: Upload zips
         uses: actions/upload-artifact@v4
         with:
-          name: SwitchU-homebrew-${{ matrix.mode }}
+          name: ${{ env.FULL == 'true' && 'SwitchU-release' || 'home_daemon' }}
           if-no-files-found: error
-          path: dist/homebrew/${{ matrix.mode }}/
-
-      - name: Upload release zips
-        if: matrix.variant == 'sysmodule'
-        uses: actions/upload-artifact@v4
-        with:
-          name: SwitchU-${{ matrix.mode }}
-          if-no-files-found: error
-          path: |
-            artifacts/SwitchU.zip
-            artifacts/home_daemon.zip
+          path: artifacts/*.zip
 
   # A pushed tag gets a DRAFT release with the two zips attached, to be
   # checked and published by hand.

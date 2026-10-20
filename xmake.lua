@@ -8,14 +8,14 @@ add_rules("mode.debug", "mode.release")
 
 -- tomvita's fork: version is the fork's GitHub release tag. SwitchU-Manager
 -- compares it with tomvita/SwitchU's latest tag, so bump it for every release.
-local version = "1.2.0m"
+local version = "1.2.0n"
 local version_define = string.format('SWITCHU_VERSION="%s"', version)
 
 -- Breeze <-> SwitchU interface level, installed with the release as
 -- switch/SwitchU/fork.txt (see smi::kForkInfoPath). Breeze offers to install or
 -- update the fork when this is lower than it needs. Bump it only when the
 -- interface changes, not for every release.
-local breeze_interface = 4
+local breeze_interface = 5
 
 set_version("1.2.0")
 
@@ -261,23 +261,8 @@ target("SwitchU")
                 string.format("interface=%s\nversion=%s\n",
                     target:values("fork.interface"), target:values("fork.version")))
             cprint("${bright green}installed${clear} fork.txt → %s", dir)
-
-            -- The same file next to the daemon: a daemon-only install (Breeze's
-            -- home_daemon.zip, no switch/SwitchU) still reports its interface.
-            local daemon_dir = path.join(target:installdir(), "atmosphere", "contents", "0100000000001000")
-            os.mkdir(daemon_dir)
-            io.writefile(path.join(daemon_dir, "fork.txt"),
-                string.format("interface=%s\nversion=%s\n",
-                    target:values("fork.interface"), target:values("fork.version")))
-            os.cp(path.join(os.projectdir(), "projects/daemon/toolbox.json"), daemon_dir)
-
-            -- Breeze loader for the Album slot (breeze_first without the User Page loader).
-            local loader_dir = path.join(target:installdir(), "atmosphere", "contents",
-                                         "0100000000001000", "breeze_loader")
-            os.mkdir(loader_dir)
-            os.cp(path.join(os.projectdir(), "build/breeze-loader/main"), loader_dir)
-            os.cp(path.join(os.projectdir(), "build/breeze-loader/main.npdm"), loader_dir)
-            cprint("${bright green}installed${clear} Breeze loader → %s", loader_dir)
+            -- The daemon folder's fork.txt and Breeze loader: switchu-daemon's
+            -- after_install, so a daemon-only build installs them too.
         end)
     end
 target_end()
@@ -385,4 +370,28 @@ target("switchu-daemon")
     set_values("switch.tid",     "0100000000001000")
     set_values("switch.json",    "projects/daemon/daemon.json")
     set_values("switch.format",  "nsp")
+    -- Script scope can't see this file's locals; pass them as values.
+    set_values("fork.interface", tostring(breeze_interface))
+    set_values("fork.version", version)
+
+    -- Everything the daemon folder holds besides exefs.nsp, so a daemon-only
+    -- build (CI on every push; Breeze's home_daemon.zip) installs complete.
+    after_install(function (target)
+        -- fork.txt next to the daemon: a daemon-only install (no switch/SwitchU)
+        -- still reports its interface.
+        local daemon_dir = path.join(target:installdir(), "atmosphere", "contents", "0100000000001000")
+        os.mkdir(daemon_dir)
+        io.writefile(path.join(daemon_dir, "fork.txt"),
+            string.format("interface=%s\nversion=%s\n",
+                target:values("fork.interface"), target:values("fork.version")))
+
+        os.cp(path.join(os.projectdir(), "projects/daemon/toolbox.json"), daemon_dir)
+
+        -- Breeze loader for the Album slot (breeze_first without the User Page loader).
+        local loader_dir = path.join(daemon_dir, "breeze_loader")
+        os.mkdir(loader_dir)
+        os.cp(path.join(os.projectdir(), "build/breeze-loader/main"), loader_dir)
+        os.cp(path.join(os.projectdir(), "build/breeze-loader/main.npdm"), loader_dir)
+        cprint("${bright green}installed${clear} fork.txt and Breeze loader → %s", daemon_dir)
+    end)
 target_end()
